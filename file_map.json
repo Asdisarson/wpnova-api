@@ -1,0 +1,453 @@
+{
+    "8b56ab1d-cea6-48df-af37-f5b63eb6f2d7": {
+        "status": "successful",
+        "location": "public/converted/wordpress temp/wordpress themes/medxtore-theme-gpl.zip"
+    },
+    "a25c1784-736e-4b28-a2ac-645ce3c3d8ee": {
+        "status": "successful",
+        "location": "public/converted/wordpress temp/wordpress plugins/advanced-custom-fields-pro.zip"
+    },
+    "949c6d34-16e5-4f97-bf7e-cd6a6b198032": {
+        "status": "successful",
+        "location": "public/converted/wordpress temp/wordpress plugins/bdevs-element.zip"
+    },
+    "691f6983-a91d-4eba-b701-f680af969896": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/bundled-plugins/bdevs-toolkit.zip"
+    },
+    "71d40f1c-2c99-4761-85f2-e923e406d1ea": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/markite-child.zip"
+    },
+    "15df6329-7eef-4828-8d4e-644d2b3f07e6": {
+        "status": "successful",
+        "location": "public/converted/wordpress temp/wordpress mixeds/markite.zip"
+    },
+    "5f14be4a-252e-428e-9019-9ae01f95d450": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/bundled-plugins/bdevs-toolkit.zip"
+    },
+    "3c95e435-84c2-4052-8084-25b3229bdefb": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/markite-child.zip"
+    },
+    "89fd960d-d48f-4c32-8a19-641938c65703": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/bundled-plugins/bdevs-toolkit.zip"
+    },
+    "115f14d6-793c-4d94-94af-b7e44594e890": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/markite-child.zip"
+    },
+    "c5f4427c-22f2-4551-8737-8f92dddcda0e": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/bundled-plugins/bdevs-toolkit.zip"
+    },
+    "fb24f432-ebfb-4533-a959-32c34a154e4f": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/markite-child.zip"
+    },
+    "fe58cc3f-7c36-4206-b7cf-c98f418c4adc": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/bundled-plugins/bdevs-toolkit.zip"
+    },
+    "2713df8e-64b5-416c-b22e-b0b39682b7f6": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/markite-child.zip"
+    },
+    "a4660ccc-da61-458b-abff-75d1c8991db8": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/bundled-plugins/bdevs-toolkit.zip"
+    },
+    "f7f304b4-80b3-45d7-bb04-4d3377a6a34b": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/markite-child.zip"
+    },
+    "46b61f84-638d-41c7-9c5e-0c46d640d1af": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/bundled-plugins/bdevs-toolkit.zip"
+    },
+    "e068d0d6-2014-4f5d-95af-ec94c1232197": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/markite-child.zip"
+    },
+    "b4825639-6b3d-4979-b181-3a8d602a16fb": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/bundled-plugins/bdevs-toolkit.zip"
+    },
+    "ea3899b9-d5bb-49ae-97ac-9265c2ca21d6": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/markite-child.zip"
+    },
+    "77fc69bd-1520-4d3d-a003-6c164b1de7e0": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/bundled-plugins/bdevs-toolkit.zip"
+    },
+    "4ffffbf6-03eb-4940-a428-f091c4bde5a8": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/markite-child.zip"
+    },
+    "0616c9f0-923b-48f5-8a6b-454e0c0c42d7": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/bundled-plugins/bdevs-toolkit.zip"
+    },
+    "d6b95838-f6da-4137-a931-8fb8a30d8419": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/markite-child.zip"
+    },
+    "59546da0-0c24-462a-a5ca-83fd8760b67f": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/bundled-plugins/bdevs-toolkit.zip"
+    },
+    "6841dcc8-36a1-45bc-b558-16c182879ecb": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/markite-child.zip"
+    },
+    "f2c0cc5e-63f2-41e3-a7d4-ee4ac156a9f2": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/bundled-plugins/bdevs-toolkit.zip"
+    },
+    "039e3f2c-4e27-418d-b7f3-891981a9ae33": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/markite-child.zip"
+    },
+    "f9d1f5ec-664d-4076-9db2-5dfc5fe20224": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/bundled-plugins/bdevs-toolkit.zip"
+    },
+    "e079f110-80e7-4b79-b660-6379fa771c9a": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/markite-child.zip"
+    },
+    "04bcea7d-b05b-44a9-b968-30a26c52215d": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/bundled-plugins/bdevs-toolkit.zip"
+    },
+    "5e523bb7-fce9-4bc9-ad2b-99be0b0dc2bd": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/markite-child.zip"
+    },
+    "981ee3e4-04fc-4ee7-8c91-7f10247089e8": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/bundled-plugins/bdevs-toolkit.zip"
+    },
+    "156957ef-b584-4c8f-b671-01ff9ebf874a": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/markite-child.zip"
+    },
+    "e715602e-f6ce-4682-8fb6-7e2cb3e23a6d": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/bundled-plugins/bdevs-toolkit.zip"
+    },
+    "c8308edb-5ce5-4b30-a241-648a01123556": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/markite-child.zip"
+    },
+    "a4bb4c8d-718b-4e64-bc1b-3b34a70be0a9": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/bundled-plugins/bdevs-toolkit.zip"
+    },
+    "78e028c1-a2e8-465a-916b-d96e51db1311": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl/markite-child.zip"
+    },
+    "435505a7-e3ba-4863-9bf2-2fd7ff4f720d": {
+        "status": "successful",
+        "location": "public/converted/wordpress temp/wordpress undefineds/bdevs-toolkit.zip"
+    },
+    "fe4ffd8d-c3fc-4924-bfc7-d6de2bb5e87d": {
+        "status": "successful",
+        "location": "public/converted/wordpress temp/wordpress undefineds/markite-child.zip"
+    },
+    "8e4ca5c3-e141-4c44-8880-a687fbadb589": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl.zip"
+    },
+    "f04655d0-bed6-44e9-ada4-d6633fba2cfc": {
+        "status": "successful",
+        "location": "public/converted/wordpress temp/wordpress undefineds/download-markite-theme-gpl.zip"
+    },
+    "3ca80b89-0d23-4bc4-9bea-4703705382c6": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "public/downloads/download-markite-theme-gpl.zip"
+    },
+    "8bc331e7-cbd8-4502-b5bb-9b72948f0c01": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "public/downloads/download-markite-theme-gpl.zip"
+    },
+    "01fbde86-a463-46f9-9ce1-c3d97a8232a7": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "public/downloads/download-markite-theme-gpl.zip"
+    },
+    "8ebe3769-eb33-4e98-bc68-1c204c12c5de": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "public/downloads/download-markite-theme-gpl.zip"
+    },
+    "c8b30335-2377-494e-bfbf-9dd14fe09c0d": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "public/downloads/download-markite-theme-gpl.zip"
+    },
+    "04d6d818-5ffe-4413-975e-e43eb75c2113": {
+        "status": "unsuccessful",
+        "location": "public/downloads/download-markite-theme-gpl.zip"
+    },
+    "3aca6fa9-2441-4517-bd10-34b6777a7fca": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/download-markite-theme-gpl.zip"
+    },
+    "2973e040-bc7d-45a7-b7e4-7a39fda632ce": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/download-markite-theme-gpl.zip"
+    },
+    "b249f7dc-046a-4b21-bd37-acb4559164b3": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/download-markite-theme-gpl.zip"
+    },
+    "81e18774-c08e-4118-aa2e-dfa2449981da": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/download-markite-theme-gpl.zip"
+    },
+    "027a5b52-0172-4ccc-9cd8-e1ba0efd3c56": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/download-markite-theme-gpl.zip"
+    },
+    "cd75707a-44c8-4687-92b4-a08fc1b00ea4": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/download-markite-theme-gpl.zip"
+    },
+    "4c7e22fb-2507-4a46-a150-815fa13f1cbc": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/download-markite-theme-gpl.zip"
+    },
+    "a52039c8-3a29-485e-a0ca-df1a9bad074a": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/download-markite-theme-gpl.zip"
+    },
+    "dab5fa38-83a5-471a-8e22-c5055937b359": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/download-markite-theme-gpl.zip"
+    },
+    "271c1a24-b008-4ffa-bfd8-c109174a1d63": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/download-markite-theme-gpl.zip"
+    },
+    "91a065b4-c73a-460e-820b-6aed0ed44dca": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/download-markite-theme-gpl.zip"
+    },
+    "93e6f07f-3fb0-49bc-9cc4-82459b8a7e75": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/download-markite-theme-gpl.zip"
+    },
+    "5c73e147-32f8-4bb5-9a14-e9eb47bfdf47": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/download-markite-theme-gpl.zip"
+    },
+    "a25d4a9e-944b-44ad-96b0-e2fd5514c4a2": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/download-markite-theme-gpl.zip"
+    },
+    "b74b8b99-5dfe-48ae-b709-ca0badfa2705": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/download-markite-theme-gpl.zip"
+    },
+    "10c19bd9-2062-4549-afa9-c2eea38f9057": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/download-markite-theme-gpl.zip"
+    },
+    "9fae5b31-e0a0-4535-8458-128bbaf52d8c": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/download-markite-theme-gpl.zip"
+    },
+    "e744341b-e77b-4b25-bf67-76fcf285dd9c": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/download-markite-theme-gpl.zip"
+    },
+    "6b732169-2a70-4878-9639-5fbb3a27c8b9": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/download-markite-theme-gpl.zip"
+    },
+    "dccd6e30-a587-45de-8944-7f01a7603184": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/download-markite-theme-gpl.zip"
+    },
+    "2dc04ff2-338c-42b7-a705-77894404c3fa": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/product-filters-for-woocommerce-gpl-plugin.zip"
+    },
+    "7f0ded87-77e6-4a03-9c70-0720dc94851e": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/download-markite-theme-gpl.zip"
+    },
+    "65887235-f136-42da-81e7-988e567fe25f": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/product-filters-for-woocommerce-gpl-plugin.zip"
+    },
+    "25c17f95-a812-43e8-9a7e-2ff904b29e4c": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/download-markite-theme-gpl.zip"
+    },
+    "2c2d36d7-7196-455e-84d7-7445c0199a54": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/product-filters-for-woocommerce-gpl-plugin.zip"
+    },
+    "6f9d9941-ac37-48e2-ae78-f9159f267d10": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/download-markite-theme-gpl.zip"
+    },
+    "6a815b18-9e95-4635-b20f-97d9c7acf30d": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/product-filters-for-woocommerce-gpl-plugin.zip"
+    },
+    "84ceaa55-d970-410c-b180-481f6ac38ca8": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/download-markite-theme-gpl.zip"
+    },
+    "5b7f31a1-7ca8-4e61-b346-393f340e153a": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/product-filters-for-woocommerce-gpl-plugin.zip"
+    },
+    "cf2de4de-9341-4a3a-969a-837107faf900": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/product-filters-for-woocommerce-gpl-plugin.zip"
+    },
+    "66640017-05dc-4aa0-9e27-8582e07dc503": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/smartic-theme-gpl.zip"
+    },
+    "b2c33b62-a675-42fa-8b9f-e3642e35600a": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/product-filters-for-woocommerce-gpl-plugin.zip"
+    },
+    "aca9ea4e-a66d-4dc2-97a0-2453d7a36b7a": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/smartic-theme-gpl.zip"
+    },
+    "35b389c9-8456-4e65-9700-c814cdaa8657": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/product-filters-for-woocommerce-gpl-plugin.zip"
+    },
+    "cd46887d-9870-4c67-987f-159e05ede5a0": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/smartic-theme-gpl.zip"
+    },
+    "51c96a9f-9415-488c-b5d5-cfe0f4968dce": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/product-filters-for-woocommerce-gpl-plugin.zip"
+    },
+    "7cc4ab54-8ee7-42f1-aa4c-188ba58632ef": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/smartic-theme-gpl.zip"
+    },
+    "4452e9c5-2a17-45a8-9f5c-6ffa4e96025c": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/product-filters-for-woocommerce-gpl-plugin.zip"
+    },
+    "831f3496-271e-4e59-a60a-d9ac82ce1d38": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/smartic-theme-gpl.zip"
+    },
+    "87165c81-7ab4-42d8-91f8-b3258e574fa8": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/smartic-theme-gpl.zip"
+    },
+    "2fbf9e2b-79b5-4e90-9843-8a60e5cfbe20": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/woocommerce-sequential-order-numbers-pro-gpl.zip"
+    },
+    "63229ef9-5887-4026-981a-fe160694b9dc": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/smartic-theme-gpl.zip"
+    },
+    "c7ad8a9d-0a1d-4ddf-94cf-fdfda86cfe83": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/woocommerce-sequential-order-numbers-pro-gpl.zip"
+    },
+    "b53b7a89-86e0-4be8-a582-8110aa600e2d": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/smartic-theme-gpl.zip"
+    },
+    "379c95f8-205b-4ac1-a837-21f4630ec84a": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/woocommerce-sequential-order-numbers-pro-gpl.zip"
+    },
+    "17d9d447-ffd8-4e26-8660-00f5b8001b76": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/smartic-theme-gpl.zip"
+    },
+    "6bae43c0-eea7-4310-b898-697e63072293": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/woocommerce-sequential-order-numbers-pro-gpl.zip"
+    },
+    "764f3edc-e086-4bbf-8ff4-55aa2c18b6d2": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/smartic-theme-gpl.zip"
+    },
+    "520cc2e8-9bbe-4d38-8770-5a8fdb664bc1": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/woocommerce-sequential-order-numbers-pro-gpl.zip"
+    },
+    "1ad2222c-124f-4a88-a511-058aeed80784": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/woocommerce-sequential-order-numbers-pro-gpl.zip"
+    },
+    "4ecb8e5a-8245-4627-8157-7c43b53fc34c": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/wp-sheet-editor-premium-gpl.zip"
+    },
+    "ebe2e713-a593-43a1-a855-b1befd908c40": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/woocommerce-sequential-order-numbers-pro-gpl.zip"
+    },
+    "196cdb06-3d07-48f2-bade-37f3a42c6541": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/wp-sheet-editor-premium-gpl.zip"
+    },
+    "d73819b0-068a-444b-b6f4-c974f0ebf30f": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/woocommerce-sequential-order-numbers-pro-gpl.zip"
+    },
+    "2ff4fb7c-ac26-45e9-951a-e6252be35bc6": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/wp-sheet-editor-premium-gpl.zip"
+    },
+    "2267c4a6-43af-4a04-8e65-f5cb8d043340": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/woocommerce-sequential-order-numbers-pro-gpl.zip"
+    },
+    "603a4e0c-df71-40e6-a3fa-489008a4d740": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/wp-sheet-editor-premium-gpl.zip"
+    },
+    "060ea4cc-91ed-42d9-80d1-7f6605c324e8": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/woocommerce-sequential-order-numbers-pro-gpl.zip"
+    },
+    "9919de63-1503-46ff-9a63-37cd2fc58314": {
+        "status": "unsuccessful (corrupt zip)",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/wp-sheet-editor-premium-gpl.zip"
+    },
+    "be9ede5a-5182-466d-99f2-576222df70c0": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/wp-sheet-editor-premium-gpl.zip"
+    },
+    "f4537d0c-6a61-4813-9cc5-134ca998be87": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/wp-sheet-editor-premium-gpl.zip"
+    },
+    "a7187e51-a403-43f9-87bf-1fc7bdf84e53": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/wp-sheet-editor-premium-gpl.zip"
+    },
+    "759894c0-b13b-4a10-b365-4932997075c7": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/wp-sheet-editor-premium-gpl.zip"
+    },
+    "33f8ecc7-b67e-4fd5-ba7c-6f1c9d4323a1": {
+        "status": "unsuccessful",
+        "location": "/Users/egill/WebstormProjects/untitled/public/downloads/wp-sheet-editor-premium-gpl.zip"
+    },
+    "c91a3a77-56da-4546-bbd9-1e1ba01bb494": {
+        "status": "unsuccessful"
+    }
+}
