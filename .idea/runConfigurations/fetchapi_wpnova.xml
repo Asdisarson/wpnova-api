@@ -1,0 +1,81 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="fetchapi-wpnova" type="docker-deploy" factoryName="dockerfile" server-name="Docker">
+    <deployment type="dockerfile">
+      <settings>
+        <option name="imageTag" value="fetchapi-wpnova" />
+        <option name="attachToContainerNeeded" value="true" />
+        <option name="containerName" value="fetchapi-wpnova" />
+        <option name="envVars">
+          <list>
+            <DockerEnvVarImpl>
+              <option name="name" value="ALLOWED_IP" />
+              <option name="value" value="206.189.108.187" />
+            </DockerEnvVarImpl>
+            <DockerEnvVarImpl>
+              <option name="name" value="DEVELOPMENT" />
+              <option name="value" value="TRUE" />
+            </DockerEnvVarImpl>
+            <DockerEnvVarImpl>
+              <option name="name" value="DOWNLOAD_URL" />
+              <option name="value" value="https://wpnova.ams3.cdn.digitaloceanspaces.com/" />
+            </DockerEnvVarImpl>
+            <DockerEnvVarImpl>
+              <option name="name" value="ENDPOINT_URL" />
+              <option name="value" value="https://wpnova.io/" />
+            </DockerEnvVarImpl>
+            <DockerEnvVarImpl>
+              <option name="name" value="FILE_SECRET" />
+              <option name="value" value="12345678901234567890123456789012" />
+            </DockerEnvVarImpl>
+            <DockerEnvVarImpl>
+              <option name="name" value="MASTER_KEY" />
+              <option name="value" value="bbbbbbb" />
+            </DockerEnvVarImpl>
+            <DockerEnvVarImpl>
+              <option name="name" value="PASSWORD" />
+              <option name="value" value="w^2MiIui7*l2$NsD" />
+            </DockerEnvVarImpl>
+            <DockerEnvVarImpl>
+              <option name="name" value="PORT" />
+              <option name="value" value="8080" />
+            </DockerEnvVarImpl>
+            <DockerEnvVarImpl>
+              <option name="name" value="SERVER_URL" />
+              <option name="value" value="https://wpnova.io/" />
+            </DockerEnvVarImpl>
+            <DockerEnvVarImpl>
+              <option name="name" value="USER_AGENT" />
+              <option name="value" value="api.wpnova.io" />
+            </DockerEnvVarImpl>
+            <DockerEnvVarImpl>
+              <option name="name" value="USERNAME" />
+              <option name="value" value="hafsteinn@pineapple.is" />
+            </DockerEnvVarImpl>
+            <DockerEnvVarImpl>
+              <option name="name" value="WC_CONSUMER_KEY" />
+              <option name="value" value="ck_0a150812bfe5aa6e6b0bb69223c9f808ee6cfeda" />
+            </DockerEnvVarImpl>
+            <DockerEnvVarImpl>
+              <option name="name" value="WC_CONSUMER_SECRET" />
+              <option name="value" value="cs_439f254fdc68740da9b2853463269663e39699ac" />
+            </DockerEnvVarImpl>
+            <DockerEnvVarImpl>
+              <option name="name" value="WC_URL" />
+              <option name="value" value="https://wpnova.io/" />
+            </DockerEnvVarImpl>
+          </list>
+        </option>
+        <option name="portBindings">
+          <list>
+            <DockerPortBindingImpl>
+              <option name="containerPort" value="8080" />
+              <option name="hostPort" value="3000" />
+            </DockerPortBindingImpl>
+          </list>
+        </option>
+        <option name="sourceFilePath" value="Dockerfile" />
+      </settings>
+    </deployment>
+    <method v="2" />
+  </configuration>
+</component>
