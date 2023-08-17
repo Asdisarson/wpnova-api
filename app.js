@@ -2,46 +2,56 @@ var express = require('express');
 var path = require('path');
 var cookieParser = require('cookie-parser');
 var logger = require('morgan');
+const fs = require('fs');
+const dbJson = require('simple-json-db')
 const scheduledTask = require('./func/scheduledTask'); // Import the scheduled task
 require('dotenv').config();
-const adminRoutes = require('./routes/adminRoutes');
-const productRoutes = require('./routes/productRoutes');
 
 var app = express();
+app.use((req, res, next) => {
+    const clientIP = req.headers['cf-connecting-ip'] || req.connection.remoteAddress;
 
+    if (clientIP === process.env.ALLOWED_IP) {
+        next();
+    } else {
+        console.log(clientIP)
+        res.status(403).send('Forbidden');
+    }
+});
 app.use(logger('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
+function executeAfterAnHour() {
+    setTimeout(() => {
+        const downloadsDir = path.join(__dirname, 'public', 'downloads');
+        fs.readdir(downloadsDir, (err, files) => {
+            if (err) throw err;
+
+            for (const file of files) {
+                fs.unlink(path.join(downloadsDir, file), err => {
+                    if (err) throw err;
+                });
+            }
+        });
+        // Your code here
+    }, 3600000); // 3600000 milliseconds = 1 hour
+}
 app.use(express.static(path.join(__dirname, 'public')));
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'defaultDB.zip'));
+app.use('/refresh', async(req,res) => {
+    scheduledTask().then(downloads => {
+
+
+        executeAfterAnHour();
+        return res.status(200).json({message:'Downloadable Files',
+                                        files: downloads})
+    }).catch(error => {
+        executeAfterAnHour();
+        return res.status(503).json({ message: 'Something is Wrong ' });
+    });
 });
-const { validateKey, deleteKey } = require('./func/apiKeyModule');
-
-app.use(async (req, res, next) => {
-    const apiKey = req.headers['x-api-key'];
-
-    // Check for the master key
-    if (apiKey === process.env.MASTER_KEY) {
-        req.isAdmin = true; // add a flag to the request object
-        return next();
-    }
-    if(process.env.DEVELOPMENT) {
-        return next()
-    }
-    // If it's not the master key, validate it in the database
-    if (!validateKey(apiKey)) {
-        return res.status(401).json({ message: 'Invalid API Key' });
-    }
-
-    next();
+app.use('/lastUpdate', async(req,res) => {
+        var db = new dbJson('./files.json');
+        return res.send(db.JSON());
 });
-app.use('/auth', async( req, res) =>{
-    return res.status(200).json({message:'Authenticated'})
-});
-app.use('/admin', adminRoutes);
-app.use('/products', productRoutes);
-
-scheduledTask();
 module.exports = app;

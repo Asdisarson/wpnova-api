@@ -1,35 +1,61 @@
 // scheduledTask.js
-
-const cron = require('node-cron');
 const puppeteer = require('puppeteer');
 const JSONdb = require('simple-json-db');
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const stream = require('stream');
-const {promisify} = require('util');
+const { promisify } = require('util');
 const pipeline = promisify(stream.pipeline);
-const zip = require("./zip");
-const valitor = require('./valitor');
-const db = new JSONdb('./files.json');
-const scheduledTask =
 
-// Define your task to run every 24 hours
-    async () => {
+const ensureDirectoryExistence = (filePath) => {
+    const dirname = path.dirname(filePath);
+    if (fs.existsSync(dirname)) {
+        return true;
+    }
+    ensureDirectoryExistence(dirname);
+    fs.mkdirSync(dirname);
+}
+function touch(filename) {
+    try {
+        // Check if file exists
+        if (!fs.existsSync(filename)) {
+            // If not, create an empty file
+            fs.writeFileSync(filename, '');
+        } else {
+            // If it does, update its modification time
+            const currentTime = new Date();
+            fs.utimesSync(filename, currentTime, currentTime);
+        }
+    } catch (err) {
+        console.error(`Error touching file ${filename}:`, err);
+    }
+}
+const scheduledTask = async () => {
+    const dbPath = path.join(__dirname, 'files.json');
+    ensureDirectoryExistence(dbPath);
+    const db = new JSONdb(dbPath);
+    db.JSON({});
+    let list = [];
+try {
+    // Launch Puppeteer browser
+    console.log('Launching Puppeteer browser...');
+    const browser = await puppeteer.launch({
+        headless: true,
+        // executablePath: '/snap/bin/chromium',
+       executablePath: '/usr/bin/google-chrome-stable',
+        defaultViewport: null,
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu','--headless'],
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.97 Safari/537.36'
+    });
+    if (!fs.existsSync('./public/downloads/')) {
+        fs.mkdirSync('./public/downloads/', { recursive: true });
+    }
+    // Create a new page
+    const page = await browser.newPage();
+    page.setDefaultTimeout(0);
 
-
-        // Launch Puppeteer browser
-        const browser = await puppeteer.launch({
-            headless: true,
-            defaultViewport: null,
-            args: ['--no-sandbox', '--disable-setuid-sandbox'],
-            userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.97 Safari/537.36'
-        });
-
-        // Create a new page
-        const page = await browser.newPage();
-        page.setDefaultTimeout(0);
-
+    try {
         // Go to the login page
         console.log('Going to the login page...');
         await page.goto('https://www.realgpl.com/my-account/');
@@ -37,10 +63,11 @@ const scheduledTask =
         await Promise.all([
             page.click('.fc-button-label'),
         ]);
+
         // Fill in the login credentials
         console.log('Typing username and password...');
-        await page.type('#username', 'hafsteinn@pineapple.is');
-        await page.type('#password', 'w^2MiIui7*l2$NsD');
+        await page.type('#username', process.env.USERNAME);
+        await page.type('#password', process.env.PASSWORD);
 
         // Click the login button and wait for navigation
         console.log('Clicking the login button...');
@@ -54,94 +81,101 @@ const scheduledTask =
         await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=100');
 
         // Get the links of the changelog entries
-        console.log('evaluating...');
-        const links = await page.evaluate(() => {
-            const anchors = Array.from(document.querySelectorAll('td.awcpt-table-col.awcpt-eleShortcode-col > div > a'));
-            return anchors.map(anchor => anchor.href);
+        const today = new Date().toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+        });
+        const yesterday = new Date(Date.now() - 86400000).toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
         });
 
-        // Get the titles and URLs of the changelog entries
-        const titles = await page.evaluate(() => {
-            const nameOfFile = Array.from(document.querySelectorAll('td > a.awcpt-title'));
-            return nameOfFile.map(obj => {
-                return {
-                    title: obj.title,
-                    url: obj.href
-                };
-            });
-        });
-        console.log('evaluating DONE!')
-        // Process each title and extract relevant information
-        for (let i = 0; i < titles.length; i++) {
+        // Extract data from rows matching today or yesterday's date
+        const data = await page.evaluate((today, yesterday) => {
+            const rows = document.querySelectorAll('tr.awcpt-row');
+            const rowDataArray = [];
 
-            let text = titles[i].title;
-            // Extract version
-            if (/\d/.test(text)) {
+            for (const row of rows) {
+                const date = row.querySelector('.awcpt-date').innerText;
+                if (date === today) {
+                    // if (date === today || date === yesterday) {
+                    const id = row.getAttribute('data-id');
+                    const productName = row.querySelector('.awcpt-title').innerText;
+                    const downloadLink = row.querySelector('.awcpt-shortcode-wrap a').getAttribute('href');
+                    const productURL = row.querySelector('.awcpt-prdTitle-col a').getAttribute('href');
 
-                let version = text.match(/v\d+(\.\d+){0,2}/)[0];
+                    // Create an object with the extracted data for each row
+                    const rowData = {
+                        id,
+                        productName,
+                        date,
+                        downloadLink,
+                        productURL, // Add the product URL to the object
+                    };
 
-
-                /*let text = "your text here";
-let version = text.match(/[0-9].{0,5}[0-9]/)[0];*/
-                // Remove 'v' from version
-                let versionWithoutV = version.replace('v', '');
-
-                // Remove version from title
-                let textWithoutVersion = text.replace(/ v\d+(\.\d+){0,2}/, '');
-
-                let url = titles[i].url;
-                var parsedUrl = new URL(links[i]);
-                url = url.replace(/^\/|\/$/g, '');
-
-                // Get the last part of the URL after the last slash
-                const parts = url.split('/');
-                const slug = parts[parts.length - 1];
-                // Extract the slug from the URL
-
-                // Get the product_id parameter value
-                var productId = parsedUrl.searchParams.get("product_id");
-                titles[i] = {
-                    version: versionWithoutV,
-                    name: textWithoutVersion,
-                    slug: slug,
-                    filename: '',
-                    filePath: '',
-                    productId: productId
-                };
-            }
-        }
-
-        let fileCounter = 0;
-        var files = [];
-
-        function modifyFilename(url) {
-            // Extract the filename
-            const filename = url.substring(url.lastIndexOf('/') + 1);
-
-            console.log(`Original Filename: ${filename}`);
-
-            // Split the filename into words
-            let words = filename.split('-');
-
-            // Loop through the words and remove any that contain a number and all words after it
-            for (let i = 0; i < words.length; i++) {
-                if (/\d/.test(words[i])) {
-                    words = words.slice(0, i);
-                    break;
+                    rowDataArray.push(rowData);
                 }
             }
 
-            // Join the words back together with "-" and append .zip
-            const newFilename = words.join('-') + '.zip';
+            return rowDataArray;
+        }, today, yesterday);
 
-            console.log(`Modified Filename: ${newFilename}`);
+        console.log('Changelog entries for today');
+        console.log(data);
 
-            return newFilename;
+        // Process each title and extract relevant information
+        for (let i = 0; i < data.length; i++) {
+            let text = data[i].productName;
+
+            // Extract version
+            if (/\d/.test(text)) {
+                let url = '';
+                let versionWithoutV = '';
+                let textWithoutVersion = '';
+                let slug = '';
+                let productId = '';
+                try {
+                    let version = text.match(/v\d+(\.\d+){0,3}/)[0];
+
+                    // Remove 'v' from version
+                    versionWithoutV = version.replace('v', '');
+                    // Remove version from title
+                    textWithoutVersion = text.replace(/ v\d+(\.\d+){0,3}/, '');
+
+                } catch (e) {
+                    console.log(e);
+                }
+                try {
+
+                    url = data[i].productURL;
+                    let parsedUrl = new URL(url);
+                    url = url.replace(/^\/|\/$/g, '');
+
+                    // Get the last part of the URL after the last slash
+                    let parts = url.split('/');
+                    slug = parts[parts.length - 1];// Extract the slug from the URL
+                    productId = parsedUrl.searchParams.get("product_id");
+                } catch (e) {
+                    console.log(e);
+                }// Get the product_id parameter value
+                data[i].version = versionWithoutV;
+                data[i].name = textWithoutVersion;
+                data[i].slug = slug;
+                data[i].filename = '';
+                data[i].filePath = '';
+                data[i].productId = productId;
+
+            }
         }
+        console.log('Data processing completed.');
 
-        // Download files from the provided links
-        for (let i = 0; i < links.length; i++) {
-            console.log(`Starting download for file ${i + 1} of ${links.length}...`);
+        // Process each title and download the files
+        let fileCounter = 0;
+
+        for (let i = 0; i < data.length; i++) {
+            console.log(`Starting download for file ${i + 1} of ${data.length}...`);
             try {
                 // Get cookies from Puppeteer
                 const cookies = await page.cookies();
@@ -151,7 +185,7 @@ let version = text.match(/[0-9].{0,5}[0-9]/)[0];*/
 
                 // Use axios to download the file
                 const response = await axios({
-                    url: links[i],
+                    url: data[i].downloadLink,
                     method: 'GET',
                     responseType: 'stream',
                     headers: {
@@ -159,99 +193,59 @@ let version = text.match(/[0-9].{0,5}[0-9]/)[0];*/
                     }
                 });
                 // Extract the filename from the URL
-                var modifiedString = titles[i].slug.replace(/-download$/, "");
+                var modifiedString = data[i].slug.replace(/-download$/, "");
+                modifiedString = data[i].slug.replace(/download-/, "");
                 var filename = `${modifiedString}.zip`;
                 console.log('Filename:', filename);
 
                 // Set the file path
                 const filePath = path.join('./public/downloads/', filename);
                 console.log('File path:', filePath);
-
+                touch(filePath);
                 // Download the file and save it to the specified path
                 await pipeline(response.data, fs.createWriteStream(filePath));
                 console.log(`Downloaded: ${filename}`);
 
                 // Update the titles array with the filename and file path
-                titles[i].filename = filename;
-                titles[i].filePath = filePath;
-                fileCounter++;
+                data[i].filename = filename;
+                data[i].filePath = filePath;
 
-                files.push(JSON.stringify(titles[i]));
+                data[i].fileUrl = path.join(process.env.DOWNLOAD_URL, filename);
+                console.log('object: ', data[i])
+                fileCounter++;
+                list.push(data[i]);
             } catch (e) {
-                console.error(`Failed to download from link: ${links[i]}`);
+                console.error(`Failed to download from link: ${data[i].downloadLink}`);
                 console.error(e);
             }
+
         }
-        console.log('Downloaded files:', files.length);
 
-
+        console.log('Downloaded files:', fileCounter);
         // Close the Puppeteer browser
         await browser.close();
         console.log('Browser closed.');
-
-        const env = require('./env.json')
-        const WooCommerceRestApi = require("@woocommerce/woocommerce-rest-api").default;
-        const api = new WooCommerceRestApi({
-            url: env.WC_URL, // replace with your WordPress site URL
-            consumerKey:env.WC_CONSUMER_KEY , // replace with your keys
-            consumerSecret: env.WC_CONSUMER_SECRET, // replace with your keys
-            version: 'wc/v3'
-        });
-        for (let i = 0; i < links.length; i++) {
-
-            // Upload the file to the corresponding WooCommerce product
-            console.log(`Starting upload for file ${i + 1} of ${links.length}...`);
-            try {
-                let filePath = titles[i].filename;
-                let newPath = filePath.replace(/public\//g, '');
-                console.log(newPath);
-                // In real life, you'd probably upload the file somewhere and get a URL to it
-                // For simplicity, let's just assume that we have a URL
-                let fileUrl = `${env.SERVER_URL}${newPath}`; // replace with your WordPress site URL
-
-                // Prepare data for the API request
-                let data = {
-                    downloadable: true,
-                    downloads: [
-                        {
-                            name: titles[i].filename,
-                            file: fileUrl
-                        }
-                    ]
-                };
-                api.get(`products?slug=${titles[i].slug}`).then(function(result) {
-                    var products = result;
-
-                    if (products.length > 0) {
-                        api.put(`products/${products[0].id}`, data);
-                        console.log(`Uploaded: ${titles[i].filename}`);
-                        db.set(products[0].id,fileUrl)
-                    } else {
-                        console.log('No product found for this slug');
-                    }
-                }).catch(function(error) {
-                    console.error(error);
-                });
-                // Send PUT request to the WooCommerce API
-
-            } catch (e) {
-                console.error(`Failed to upload file: ${titles[i].filename}`);
-                console.error(e);
-            }
-        }
-        const directory = './public/downloads';
-        fs.readdir(directory, (err, files) => {
-            if (err) throw err;
-
-            for (const file of files) {
-                fs.unlink(path.join(directory, file), err => {
-                    if (err) throw err;
-                });
+        db.JSON(list);
+        db.sync();
+        convertJsonFileToXml(list, './public/data.csv', (err) => {
+            if (err) {
+                console.error('Error during conversion:', err);
+            } else {
+                console.log('XML file has been saved!');
             }
         });
-        await zip();
-
+        return list.length
+    } catch (err) {
+        console.error('An error occurred:');
+        console.error(err);
+        return err;
     }
+}
+catch (err) {
+    console.error('An error occurred:');
+    console.error(err);
+    return err;
+}
+}
+
 module.exports = scheduledTask;
-
-
