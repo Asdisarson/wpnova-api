@@ -99,12 +99,14 @@ try {
         const data = await page.evaluate((today, yesterday) => {
             const rows = document.querySelectorAll('tr.awcpt-row');
             const rowDataArray = [];
-
+            let chosenDate = today;
+            if(process.env.YESTERDAY) {
+                chosenDate = yesterday;
+            }
             for (const row of rows) {
                 const date = row.querySelector('.awcpt-date').innerText;
                 // This determanice date of the update 
-                if (date === process.env.DAY_OF_UPDATE) {
-                    // if (date === today || date === yesterday) {
+                if (date === chosenDate) {
                     const id = row.getAttribute('data-id');
                     const productName = row.querySelector('.awcpt-title').innerText;
                     const downloadLink = row.querySelector('.awcpt-shortcode-wrap a').getAttribute('href');
