@@ -40,7 +40,7 @@ function executeAfterAnHour() {
 }
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/refresh', async(req,res) => {
-    scheduledTask().then(downloads => {
+    scheduledTask(process.env.YESTERDAY||false).then(downloads => {
 
 
         executeAfterAnHour();

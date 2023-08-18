@@ -1,4 +1,3 @@
-require('dotenv').config();
 const puppeteer = require('puppeteer');
 const JSONdb = require('simple-json-db');
 const fs = require('fs');
@@ -33,7 +32,7 @@ function touch(filename) {
     }
 }
 
-const scheduledTask = async () => {
+const scheduledTask = async (chosen) => {
     const dbPath = path.join(__dirname, 'files.json');
     ensureDirectoryExistence(dbPath);
     const db = new JSONdb(dbPath);
@@ -100,7 +99,7 @@ const scheduledTask = async () => {
                 const rows = document.querySelectorAll('tr.awcpt-row');
                 const rowDataArray = [];
                 let selected = today;
-                if(process.env.YESTERDAY) {
+                if(chosen) {
                     selected = yesterday;
                 }
 
