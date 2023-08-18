@@ -10,10 +10,12 @@ require('dotenv').config();
 var app = express();
 app.use((req, res, next) => {
  const clientIP = req.ip;
-
+    console.log(req.ip);
   if (process.env.ALLOWED.includes(clientIP)||process.env.DEVELOPMENT) {
+      console.log('SUCCESS');
     next();
   } else {
+      console.log('DENIED')
     res.status(403).send('Access denied');
   }
 });
