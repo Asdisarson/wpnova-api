@@ -3,13 +3,20 @@ var path = require('path');
 var cookieParser = require('cookie-parser');
 var logger = require('morgan');
 const fs = require('fs');
-require('dotenv').config();
-
 const dbJson = require('simple-json-db')
 const scheduledTask = require('./func/scheduledTask'); // Import the scheduled task
+require('dotenv').config();
 
 var app = express();
+app.use((req, res, next) => {
+ const clientIP = req.ip;
 
+  if (process.env.ALLOWED.includes(clientIP)||process.env.DEVELOPMENT) {
+    next();
+  } else {
+    res.status(403).send('Access denied');
+  }
+});
 app.use(logger('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
