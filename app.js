@@ -9,9 +9,9 @@ require('dotenv').config();
 
 var app = express();
 app.use((req, res, next) => {
- const clientIP = req.ip;
+    const remoteAddress = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
     console.log(req.ip);
-  if (process.env.ALLOWED_IP.includes(clientIP)||process.env.DEVELOPMENT) {
+  if (process.env.ALLOWED_IP.includes(remoteAddress)||process.env.DEVELOPMENT) {
       console.log('SUCCESS');
     next();
   } else {

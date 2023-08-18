@@ -9,6 +9,7 @@ const stream = require('stream');
 const { promisify } = require('util');
 const pipeline = promisify(stream.pipeline);
 const convertJsonToCsv = require('./convertJsonToCsv');
+require('dotenv').config();
 
 const ensureDirectoryExistence = (filePath) => {
     const dirname = path.dirname(filePath);
@@ -233,6 +234,7 @@ try {
         console.log('Browser closed.');
         db.JSON(list);
         db.sync();
+        touch('data.csv');
         convertJsonToCsv(list, './public/data.csv', (err) => {
             if (err) {
                 console.error('Error:', err);
