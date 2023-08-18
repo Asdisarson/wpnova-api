@@ -63,6 +63,10 @@
               <option name="name" value="WC_URL" />
               <option name="value" value="https://wpnova.io/" />
             </DockerEnvVarImpl>
+            <DockerEnvVarImpl>
+              <option name="name" value="YESTERDAY" />
+              <option name="value" value="TRUE" />
+            </DockerEnvVarImpl>
           </list>
         </option>
         <option name="portBindings">
