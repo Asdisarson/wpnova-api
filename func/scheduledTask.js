@@ -1,4 +1,6 @@
 // scheduledTask.js
+
+console.log('yesterday');// if set today or yesterday 
 const puppeteer = require('puppeteer');
 const JSONdb = require('simple-json-db');
 const fs = require('fs');
