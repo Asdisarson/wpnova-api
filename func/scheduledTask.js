@@ -8,8 +8,23 @@ const axios = require('axios');
 const stream = require('stream');
 const { promisify } = require('util');
 const pipeline = promisify(stream.pipeline);
+const { Parser } = require('json2csv');
 
-const ensureDirectoryExistence = (filePath) => {
+function convertJsonToCsv(jsonData, outputPath, callback) {
+    try {
+        const parser = new Parser();
+        const csv = parser.parse(jsonData);
+        fs.writeFile(outputPath, csv, (err) => {
+            if (err) {
+                callback(err);
+            } else {
+                callback(null);
+            }
+        });
+    } catch (error) {
+        callback(error);
+    }
+}const ensureDirectoryExistence = (filePath) => {
     const dirname = path.dirname(filePath);
     if (fs.existsSync(dirname)) {
         return true;
@@ -82,7 +97,7 @@ try {
         console.log('Going to the changelog page...');
         await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=100');
 
-        // Get the links of the changelog entries
+        // Get the links of the changelog entrie
         const today = new Date().toLocaleDateString('en-US', {
             year: 'numeric',
             month: 'long',
@@ -230,13 +245,7 @@ try {
         console.log('Browser closed.');
         db.JSON(list);
         db.sync();
-        convertJsonFileToXml(list, './public/data.csv', (err) => {
-            if (err) {
-                console.error('Error during conversion:', err);
-            } else {
-                console.log('XML file has been saved!');
-            }
-        });
+
         return list.length
     } catch (err) {
         console.error('An error occurred:');
