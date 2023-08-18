@@ -8,7 +8,7 @@ const axios = require('axios');
 const stream = require('stream');
 const { promisify } = require('util');
 const pipeline = promisify(stream.pipeline);
-const convertJsonToCsv = require('./jsonToCsvConverter');
+const convertJsonToCsv = require('./convertJsonToCsv');
 
 const ensureDirectoryExistence = (filePath) => {
     const dirname = path.dirname(filePath);
