@@ -52,7 +52,7 @@ try {
     });
     if (!fs.existsSync('./public/downloads/')) {
         fs.mkdirSync('./public/downloads/', { recursive: true });
-        touch('index.html');1
+        touch('index.html');
     }
     // Create a new page
     const page = await browser.newPage();
