@@ -1,3 +1,4 @@
+require('dotenv').config();
 var express = require('express');
 var path = require('path');
 var cookieParser = require('cookie-parser');
@@ -5,7 +6,6 @@ var logger = require('morgan');
 const fs = require('fs');
 const dbJson = require('simple-json-db')
 const scheduledTask = require('./func/scheduledTask'); // Import the scheduled task
-require('dotenv').config();
 
 var app = express();
 app.use((req, res, next) => {

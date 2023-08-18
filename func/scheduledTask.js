@@ -1,5 +1,5 @@
 // scheduledTask.js
-
+require('dotenv').config();
 const puppeteer = require('puppeteer');
 const JSONdb = require('simple-json-db');
 const fs = require('fs');
@@ -9,7 +9,6 @@ const stream = require('stream');
 const { promisify } = require('util');
 const pipeline = promisify(stream.pipeline);
 const convertJsonToCsv = require('./convertJsonToCsv');
-require('dotenv').config();
 
 const ensureDirectoryExistence = (filePath) => {
     const dirname = path.dirname(filePath);
