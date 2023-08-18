@@ -8,7 +8,7 @@ const axios = require('axios');
 const stream = require('stream');
 const { promisify } = require('util');
 const pipeline = promisify(stream.pipeline);
-const { Parser } = require('json2csv');
+const convertJsonToCsv = require('./jsonToCsvConverter');
 
 const ensureDirectoryExistence = (filePath) => {
     const dirname = path.dirname(filePath);
@@ -231,7 +231,13 @@ try {
         console.log('Browser closed.');
         db.JSON(list);
         db.sync();
-
+        convertJsonToCsv(list, './public/data.csv', (err) => {
+            if (err) {
+                console.error('Error:', err);
+            } else {
+                console.log('CSV file has been saved.');
+            }
+        });
         return list.length
     } catch (err) {
         console.error('An error occurred:');
