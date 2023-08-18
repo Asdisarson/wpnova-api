@@ -9,14 +9,13 @@ require('dotenv').config();
 
 var app = express();
 app.use((req, res, next) => {
-    const clientIP = req.headers['cf-connecting-ip'] || req.connection.remoteAddress;
+ const clientIP = req.ip;
 
-    if (clientIP === process.env.ALLOWED_IP) {
-        next();
-    } else {
-        console.log(clientIP)
-        res.status(403).send('Forbidden');
-    }
+  if (process.env.AllowedIP.includes(clientIP)) {
+    next(); 
+  } else {
+    res.status(403).send('Access denied'); 
+  }
 });
 app.use(logger('dev'));
 app.use(express.json());
