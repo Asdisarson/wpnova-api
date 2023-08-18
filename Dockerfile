@@ -16,7 +16,7 @@ RUN usermod -aG sudo node && \
 
 # Clone the specified repository as the node user
 USER node
-RUN git clone https://github.com/Asdisarson/fetchapi.wpnova.io.git /home/node/fetchapi.wpnova.io
+RUN git clone https://github.com/Asdisarson/wpnova-api.git /home/node/fetchapi.wpnova.io
 
 # Set the working directory
 WORKDIR /home/node/fetchapi.wpnova.io

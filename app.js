@@ -8,15 +8,7 @@ const scheduledTask = require('./func/scheduledTask'); // Import the scheduled t
 require('dotenv').config();
 
 var app = express();
-app.use((req, res, next) => {
- const clientIP = req.ip;
 
-  if (process.env.AllowedIP.includes(clientIP)) {
-    next(); 
-  } else {
-    res.status(403).send('Access denied'); 
-  }
-});
 app.use(logger('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));

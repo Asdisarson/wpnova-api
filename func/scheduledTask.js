@@ -1,6 +1,5 @@
 // scheduledTask.js
 
-console.log('yesterday');// if set today or yesterday 
 const puppeteer = require('puppeteer');
 const JSONdb = require('simple-json-db');
 const fs = require('fs');
@@ -52,6 +51,7 @@ try {
     });
     if (!fs.existsSync('./public/downloads/')) {
         fs.mkdirSync('./public/downloads/', { recursive: true });
+        touch('index.html');1
     }
     // Create a new page
     const page = await browser.newPage();
