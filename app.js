@@ -3,9 +3,10 @@ var path = require('path');
 var cookieParser = require('cookie-parser');
 var logger = require('morgan');
 const fs = require('fs');
+require('dotenv').config();
+
 const dbJson = require('simple-json-db')
 const scheduledTask = require('./func/scheduledTask'); // Import the scheduled task
-require('dotenv').config();
 
 var app = express();
 
