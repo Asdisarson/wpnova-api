@@ -1,5 +1,5 @@
 # Use Node.js v20 as the base image
-FROM node:18
+FROM node:20
 
 # Update package lists and install necessary packages
 RUN apt-get update && \
