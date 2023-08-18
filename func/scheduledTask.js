@@ -10,21 +10,7 @@ const { promisify } = require('util');
 const pipeline = promisify(stream.pipeline);
 const { Parser } = require('json2csv');
 
-function convertJsonToCsv(jsonData, outputPath, callback) {
-    try {
-        const parser = new Parser();
-        const csv = parser.parse(jsonData);
-        fs.writeFile(outputPath, csv, (err) => {
-            if (err) {
-                callback(err);
-            } else {
-                callback(null);
-            }
-        });
-    } catch (error) {
-        callback(error);
-    }
-}const ensureDirectoryExistence = (filePath) => {
+const ensureDirectoryExistence = (filePath) => {
     const dirname = path.dirname(filePath);
     if (fs.existsSync(dirname)) {
         return true;
@@ -165,9 +151,9 @@ try {
                 } catch (e) {
                     console.log(e);
                 }
+                url = data[i].productURL;
                 try {
 
-                    url = data[i].productURL;
                     let parsedUrl = new URL(url);
                     url = url.replace(/^\/|\/$/g, '');
 
