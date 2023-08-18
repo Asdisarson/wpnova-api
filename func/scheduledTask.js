@@ -99,7 +99,8 @@ try {
 
             for (const row of rows) {
                 const date = row.querySelector('.awcpt-date').innerText;
-                if (date === today) {
+                // This determanice date of the update 
+                if (date === yesterday) {
                     // if (date === today || date === yesterday) {
                     const id = row.getAttribute('data-id');
                     const productName = row.querySelector('.awcpt-title').innerText;
