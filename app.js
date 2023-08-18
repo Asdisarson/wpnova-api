@@ -5,7 +5,8 @@ var cookieParser = require('cookie-parser');
 var logger = require('morgan');
 const fs = require('fs');
 const dbJson = require('simple-json-db')
-const scheduledTask = require('./func/scheduledTask'); // Import the scheduled task
+const scheduledTask = require('./func/scheduledTask');
+const scheduledTaskYesterday = require('./func/scheduledTaskYesterday'); // Import the scheduled task
 
 var app = express();
 app.use((req, res, next) => {
@@ -40,16 +41,34 @@ function executeAfterAnHour() {
 }
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/refresh', async(req,res) => {
-    scheduledTask(process.env.YESTERDAY||false).then(downloads => {
+    if(process.env.YESTERDAY) {
+        scheduledTaskYesterday().then(downloads => {
 
 
-        executeAfterAnHour();
-        return res.status(200).json({message:'Downloadable Files',
-                                        files: downloads})
-    }).catch(error => {
-        executeAfterAnHour();
-        return res.status(503).json({ message: 'Something is Wrong ' });
-    });
+            executeAfterAnHour();
+            return res.status(200).json({
+                message: 'Downloadable Files',
+                files: downloads
+            })
+        }).catch(error => {
+            executeAfterAnHour();
+            return res.status(503).json({message: 'Something is Wrong '});
+        });
+    }
+    else {
+        scheduledTask().then(downloads => {
+
+
+            executeAfterAnHour();
+            return res.status(200).json({
+                message: 'Downloadable Files',
+                files: downloads
+            })
+        }).catch(error => {
+            executeAfterAnHour();
+            return res.status(503).json({message: 'Something is Wrong '});
+        });
+    }
 });
 app.use('/lastUpdate', async(req,res) => {
         var db = new dbJson('./files.json');
