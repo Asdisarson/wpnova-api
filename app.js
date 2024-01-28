@@ -9,23 +9,11 @@ const scheduledTask = require('./func/scheduledTask');
 const scheduledTaskYesterday = require('./func/scheduledTaskYesterday'); // Import the scheduled task
 
 var app = express();
-app.use((req, res, next) => {
-    const remoteAddress = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
-    console.log(req.ip);
-    console.log('new');
-  if (process.env.ALLOWED_IP.includes(remoteAddress)||process.env.DEVELOPMENT) {
-      console.log('SUCCESS');
-    next();
-  } else {
-      console.log('DENIED')
-    res.status(403).send('Access denied');
-  }
-});
 app.use(logger('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
-function executeAfterAnHour() {
+function executeAfterAnHour()    {
     setTimeout(() => {
         const downloadsDir = path.join(__dirname, 'public', 'downloads');
         fs.readdir(downloadsDir, (err, files) => {
