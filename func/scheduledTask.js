@@ -76,7 +76,7 @@ const scheduledTask = async () => {
 
             // Go to the changelog page
             console.log('Going to the changelog page...');
-            await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=100');
+            await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=500');
 
             // Get the links of the changelog entrie
             const today = new Date().toLocaleDateString('en-US', {

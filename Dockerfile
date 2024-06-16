@@ -3,8 +3,12 @@ FROM node:20
 
 # Update package lists and install necessary packages
 RUN apt-get update && \
-    apt-get install -y wget gnupg git sudo chromium fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-khmeros fonts-kacst fonts-freefont-ttf libxss1 --no-install-recommends && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y wget gnupg git sudo ca-certificates && \
+    apt-get update && \
+    apt-get install -y chromium fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-khmeros fonts-kacst fonts-freefont-ttf libxss1 --no-install-recommends && \
+    update-ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && \
+    npm install -g npm@10.4.0
 
 # Add node user to the sudo group and set up password-less sudo
 RUN usermod -aG sudo node && \
@@ -25,5 +29,18 @@ RUN npm install puppeteer puppeteer-core @puppeteer/browsers && \
 # Install the repository's npm dependencies
 RUN npm install
 
-# Set the default command to run when the container starts
+# Switch back to the root user to copy the entrypoint script and change permissions
+USER root
+
+# Copy the entrypoint script
+COPY docker-entrypoint.sh /usr/local/bin/
+
+# Change permissions to make the script executable
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Switch back to the node user
+USER node
+
+# Set the entrypoint and default command
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "bin/www"]

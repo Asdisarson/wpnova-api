@@ -61,6 +61,7 @@ const scheduledTask = async () => {
             console.log('Going to the login page...');
             await page.goto('https://www.realgpl.com/my-account/');
 
+
             // Fill in the login credentials
             console.log('Typing username and password...');
             await page.type('#username', process.env.USERNAME);
@@ -75,7 +76,7 @@ const scheduledTask = async () => {
 
             // Go to the changelog page
             console.log('Going to the changelog page...');
-            await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=100');
+            await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=500');
 
             // Get the links of the changelog entrie
             const today = new Date().toLocaleDateString('en-US', {
@@ -83,7 +84,7 @@ const scheduledTask = async () => {
                 month: 'long',
                 day: 'numeric',
             });
-            const yesterday = new Date(Date.now() - 86400000).toLocaleDateString('en-US', {
+            const yesterday = new Date(Date.now() - 604800000).toLocaleDateString('en-US', {
                 year: 'numeric',
                 month: 'long',
                 day: 'numeric',
@@ -97,7 +98,7 @@ const scheduledTask = async () => {
                 for (const row of rows) {
                     const date = row.querySelector('.awcpt-date').innerText;
                     // This determanice date of the update
-                    if (date === today) {
+                    if (date === yesterday) {
                         const id = row.getAttribute('data-id');
                         const productName = row.querySelector('.awcpt-title').innerText;
                         const downloadLink = row.querySelector('.awcpt-shortcode-wrap a').getAttribute('href');
