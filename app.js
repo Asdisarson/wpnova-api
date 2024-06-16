@@ -32,11 +32,7 @@ function executeAfterAnHour()    {
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/refresh', async(req,res) => {
     if (typeof req.query.date === 'undefined') {
-        req.query.date =  new Date(req.query.date).toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric',
-        });
+        req.query.date =  ''
     }
         scheduledTaskYesterday(req.query.date).then(downloads => {
 
