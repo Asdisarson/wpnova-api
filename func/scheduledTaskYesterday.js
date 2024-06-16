@@ -86,13 +86,6 @@ const scheduledTask = async () => {
                 page.click('.button.woocommerce-button.woocommerce-form-login__submit'),
             ]);
 
-            // Click the login button and wait for navigation
-            console.log('Clicking the login button...');
-            await Promise.all([
-                page.waitForNavigation(),
-                page.click('.button.woocommerce-button.woocommerce-form-login__submit'),
-            ]);
-
             // Go to the changelog page
             console.log('Going to the changelog page...');
             await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=1000');
