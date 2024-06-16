@@ -62,10 +62,29 @@ const scheduledTask = async () => {
             await page.goto('https://www.realgpl.com/my-account/');
 
 
+
+            try {
+                //consent label
+                await Promise.all([
+                    page.click('.fc-button-label'),
+                ]);
+            } catch (error) {
+                console.log('No Consent block')
+            }
+
+
+
             // Fill in the login credentials
             console.log('Typing username and password...');
             await page.type('#username', process.env.USERNAME);
             await page.type('#password', process.env.PASSWORD);
+
+            // Click the login button and wait for navigation
+            console.log('Clicking the login button...');
+            await Promise.all([
+                page.waitForNavigation(),
+                page.click('.button.woocommerce-button.woocommerce-form-login__submit'),
+            ]);
 
             // Click the login button and wait for navigation
             console.log('Clicking the login button...');
