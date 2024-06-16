@@ -84,12 +84,18 @@ const scheduledTask = async () => {
                 month: 'long',
                 day: 'numeric',
             });
-            const yesterday = new Date(Date.now() - 604800000).toLocaleDateString('en-US', {
+            let yesterday = new Date().toLocaleDateString('en-US', {
                 year: 'numeric',
                 month: 'long',
                 day: 'numeric',
             });
-
+            if(req.query.date) {
+                 yesterday = new Date().toLocaleDateString('en-US', {
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric',
+                });
+            }
             // Extract data from rows matching today or yesterday's date
             const data = await page.evaluate((today, yesterday) => {
                 const rows = document.querySelectorAll('tr.awcpt-row');
@@ -98,7 +104,6 @@ const scheduledTask = async () => {
                 for (const row of rows) {
                     const date = row.querySelector('.awcpt-date').innerText;
                     // This determanice date of the update
-                    if (date === yesterday) {
                         const id = row.getAttribute('data-id');
                         const productName = row.querySelector('.awcpt-title').innerText;
                         const downloadLink = row.querySelector('.awcpt-shortcode-wrap a').getAttribute('href');
@@ -115,7 +120,7 @@ const scheduledTask = async () => {
 
                         rowDataArray.push(rowData);
                     }
-                }
+
 
                 return rowDataArray;
             }, today, yesterday);

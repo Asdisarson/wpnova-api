@@ -30,7 +30,6 @@ function executeAfterAnHour()    {
 }
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/refresh', async(req,res) => {
-    if(process.env.YESTERDAY) {
         scheduledTaskYesterday().then(downloads => {
 
 
@@ -43,21 +42,7 @@ app.use('/refresh', async(req,res) => {
             executeAfterAnHour();
             return res.status(503).json({message: 'Something is Wrong '});
         });
-    }
-    else {
-        scheduledTask().then(downloads => {
 
-
-            executeAfterAnHour();
-            return res.status(200).json({
-                message: 'Downloadable Files',
-                files: downloads
-            })
-        }).catch(error => {
-            executeAfterAnHour();
-            return res.status(503).json({message: 'Something is Wrong '});
-        });
-    }
 });
 app.use('/lastUpdate', async(req,res) => {
         var db = new dbJson('./files.json');
