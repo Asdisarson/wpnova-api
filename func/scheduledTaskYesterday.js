@@ -32,7 +32,7 @@ function touch(filename) {
     }
 }
 
-const scheduledTask = async () => {
+const scheduledTask = async (date) => {
     const dbPath = path.join(__dirname, 'files.json');
     ensureDirectoryExistence(dbPath);
     const db = new JSONdb(dbPath);
@@ -89,25 +89,11 @@ const scheduledTask = async () => {
             // Go to the changelog page
             console.log('Going to the changelog page...');
             await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=1000');
-
-            // Get the links of the changelog entrie
-            const today = new Date().toLocaleDateString('en-US', {
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric',
-            });
-            let yesterday = new Date().toLocaleDateString('en-US', {
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric',
-            });
-            if(req.query.date) {
-                 yesterday = new Date().toLocaleDateString('en-US', {
+                var yesterday = new Date(date).toLocaleDateString('en-US', {
                     year: 'numeric',
                     month: 'long',
                     day: 'numeric',
                 });
-            }
             // Extract data from rows matching today or yesterday's date
             const data = await page.evaluate((today, yesterday) => {
                 const rows = document.querySelectorAll('tr.awcpt-row');
@@ -135,9 +121,9 @@ const scheduledTask = async () => {
 
 
                 return rowDataArray;
-            }, today, yesterday);
+            }, yesterday);
 
-            console.log('Changelog entries for today');
+            console.log('Changelog entries for ', yesterday);
             console.log(data);
 
             // Process each title and extract relevant information
