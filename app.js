@@ -31,9 +31,9 @@ function executeAfterAnHour()    {
 }
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/refresh', async(req,res) => {
-    var date = new Date().toISOString();
+    var date = new Date();
     if(req.query.date){
-        date = req.query.date;
+        date = new Date(req.query.date);
     }
     scheduledTaskYesterday(date).then(downloads => {
 
