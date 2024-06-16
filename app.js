@@ -8,7 +8,7 @@ const fs = require('fs');
 const dbJson = require('simple-json-db')
 const scheduledTask = require('./func/scheduledTask');
 const scheduledTaskYesterday = require('./func/scheduledTaskYesterday'); // Import the scheduled task
-
+var date = new Date();
 var app = express();
 app.use(logger('dev'));
 app.use(express.json());
@@ -31,8 +31,10 @@ function executeAfterAnHour()    {
 }
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/refresh', async(req,res) => {
-    const date = req.query.date || ''; // Use logical OR to set default value
-
+    var date = new Date().toISOString();
+    if(req.query.date){
+        date = req.query.date;
+    }
     scheduledTaskYesterday(date).then(downloads => {
 
 
