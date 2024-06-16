@@ -89,19 +89,20 @@ const scheduledTask = async (date = new Date()) => {
             // Go to the changelog page
             console.log('Going to the changelog page...');
             await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=100');
-            var yesterday = new Date(date).toLocaleDateString('en-US', {
+            var theDate = new Date(date).toLocaleDateString('en-US', {
                     year: 'numeric',
                     month: 'long',
                     day: 'numeric',
                 });
-            // Extract data from rows matching today or yesterday's date
-            const data = await page.evaluate((today, yesterday) => {
+
+            const data = await page.evaluate((theDate) => {
                 const rows = document.querySelectorAll('tr.awcpt-row');
                 const rowDataArray = [];
 
                 for (const row of rows) {
                     const date = row.querySelector('.awcpt-date').innerText;
                     // This determanice date of the update
+                    if (theDate === date) {
                         const id = row.getAttribute('data-id');
                         const productName = row.querySelector('.awcpt-title').innerText;
                         const downloadLink = row.querySelector('.awcpt-shortcode-wrap a').getAttribute('href');
@@ -119,7 +120,7 @@ const scheduledTask = async (date = new Date()) => {
                         rowDataArray.push(rowData);
                     }
 
-
+                }
                 return rowDataArray;
             }, yesterday);
 
