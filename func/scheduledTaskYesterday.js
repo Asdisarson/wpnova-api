@@ -122,9 +122,9 @@ const scheduledTask = async (date = new Date()) => {
 
                 }
                 return rowDataArray;
-            }, yesterday);
+            }, theDate);
 
-            console.log('Changelog entries for ', yesterday);
+            console.log('Changelog entries for ', theDate);
             console.log(data);
 
             // Process each title and extract relevant information
