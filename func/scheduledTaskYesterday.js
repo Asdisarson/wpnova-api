@@ -89,12 +89,13 @@ const scheduledTask = async (date = new Date()) => {
             // Go to the changelog page
             console.log('Going to the changelog page...');
             await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=100');
+            console.log(date)
             var theDate = new Date(date).toLocaleDateString('en-US', {
                     year: 'numeric',
                     month: 'long',
                     day: 'numeric',
                 });
-
+            console.log(theDate);
             const data = await page.evaluate((theDate) => {
                 const rows = document.querySelectorAll('tr.awcpt-row');
                 const rowDataArray = [];

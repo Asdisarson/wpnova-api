@@ -35,6 +35,7 @@ app.use('/refresh', async(req,res) => {
     if(req.query.date){
         date = new Date(req.query.date);
     }
+    console.log(date.toISOString());
     scheduledTaskYesterday(date).then(downloads => {
 
 
