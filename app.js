@@ -31,10 +31,9 @@ function executeAfterAnHour()    {
 }
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/refresh', async(req,res) => {
-    if (typeof req.query.date === 'undefined') {
-        req.query.date =  ''
-    }
-        scheduledTaskYesterday(req.query.date).then(downloads => {
+    const date = req.query.date || ''; // Use logical OR to set default value
+
+    scheduledTaskYesterday(date).then(downloads => {
 
 
             executeAfterAnHour();
