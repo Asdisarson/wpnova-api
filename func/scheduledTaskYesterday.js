@@ -88,7 +88,7 @@ const scheduledTask = async (date = new Date()) => {
 
             // Go to the changelog page
             console.log('Going to the changelog page...');
-            await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=1000');
+            await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=100');
             console.log(date)
             var theDate = new Date(date).toLocaleDateString('en-US', {
                     year: 'numeric',
@@ -101,7 +101,7 @@ const scheduledTask = async (date = new Date()) => {
                 const rowDataArray = [];
 
                 for (const row of rows) {
-                    const date = row.querySelector('.awcpt-date').innerText;
+                    var date = row.querySelector('.awcpt-date').innerText;
                     // This determanice date of the update
                     if (theDate == date) {
                         try {
