@@ -1,5 +1,5 @@
 # Use Node.js v20 as the base image
-FROM node:20
+FROM arm64v8/node:20
 
 # Install necessary packages
 RUN apt-get update && \
