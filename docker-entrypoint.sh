@@ -1,7 +1,4 @@
-#!/bin/bash
-# docker-entrypoint.sh
+#!/bin/sh
+set -e
 
-# Any pre-startup configuration can go here
-
-# Execute the passed command
 exec "$@"
