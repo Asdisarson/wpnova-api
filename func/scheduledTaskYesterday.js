@@ -103,7 +103,7 @@ const scheduledTask = async (date = new Date()) => {
                 for (const row of rows) {
                     const date = row.querySelector('.awcpt-date').innerText;
                     // This determanice date of the update
-                    if (theDate === date) {
+                    if (theDate == date) {
                         try {
                         const id = row.getAttribute('data-id');
                         const productName = row.querySelector('.awcpt-title').innerText;
