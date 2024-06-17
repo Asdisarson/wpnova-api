@@ -1,5 +1,7 @@
-#!/bin/sh
-set -e
+#!/bin/bash
+# docker-entrypoint.sh
 
-# Execute the command passed as arguments
+# Any pre-startup configuration can go here
+
+# Execute the passed command
 exec "$@"
