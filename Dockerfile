@@ -1,14 +1,14 @@
 # Use Node.js v20 as the base image
-FROM arm64v8/node:20
+FROM node:20
 
 # Update package lists and install necessary packages
 RUN apt-get update && \
-    apt-get install -y wget gnupg git sudo ca-certificates && \
+    apt-get install -y wget gnupg git sudo && \
+    wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/googlechrome-linux-keyring.gpg && \
+    sh -c 'echo "deb [arch=amd64 signed-by=/usr/share/keyrings/googlechrome-linux-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list' && \
     apt-get update && \
-    apt-get install -y chromium fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-khmeros fonts-kacst fonts-freefont-ttf libxss1 --no-install-recommends && \
-    update-ca-certificates && \
-    rm -rf /var/lib/apt/lists/* && \
-    npm install -g npm@10.4.0
+    apt-get install -y google-chrome-stable fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-khmeros fonts-kacst fonts-freefont-ttf libxss1 --no-install-recommends && \
+    rm -rf /var/lib/apt/lists/*
 
 # Add node user to the sudo group and set up password-less sudo
 RUN usermod -aG sudo node && \
@@ -22,25 +22,11 @@ RUN git clone https://github.com/Asdisarson/wpnova-api.git /home/node/fetchapi.w
 WORKDIR /home/node/fetchapi.wpnova.io
 
 # Install Puppeteer and related packages
-RUN npm install puppeteer puppeteer-core @puppeteer/browsers && \
-    (node -e "const puppeteer = require('puppeteer'); console.log(`Puppeteer version: ${puppeteer.version()}`);" > PUPPETEER_VERSION) && \
-    (node -e "const puppeteer = require('puppeteer'); console.log(`Executable path: ${puppeteer.executablePath()}`);" > EXECUTABLE_PATH)
+RUN  npm install puppeteer puppeteer-core @puppeteer/browsers && \
+    (node -e "require('child_process').execSync(require('puppeteer').executablePath() + ' --credits', {stdio: 'inherit'})" > THIRD_PARTY_NOTICES)
 
 # Install the repository's npm dependencies
-RUN npm install
+RUN  npm install
 
-# Switch back to the root user to copy the entrypoint script and change permissions
-USER root
-
-# Copy the entrypoint script
-COPY docker-entrypoint.sh /usr/local/bin/
-
-# Change permissions to make the script executable
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
-
-# Switch back to the node user
-USER node
-
-# Set the entrypoint and default command
-ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+# Set the default command to run when the container starts
 CMD ["node", "bin/www"]
