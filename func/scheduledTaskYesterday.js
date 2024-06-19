@@ -96,42 +96,11 @@ const scheduledTask = async (date = new Date()) => {
             const data = await page.evaluate((theDateStr) => {
                 const theDate = new Date(theDateStr);  // Reconstruct the Date object
                 const rows = document.querySelectorAll('.awcpt-row');
-                console.log('Resolving to the changelog page...');
-                console.log(rows.length);
                 const rowDataArray = [];
-                for (const row of rows) {
-                    let datez = new Date(row.querySelector('.awcpt-date').innerText);
-                    console.log(datez);
-                    try {
-                        if (theDate.getTime() === datez.getTime()) {
-                            let id = row.getAttribute('data-id');
-                            let productName = row.querySelector('.awcpt-title').innerText;
-                            let downloadLink = row.querySelector('.awcpt-shortcode-wrap a')?.getAttribute('href');
-                            let productURL = row.querySelector('.awcpt-prdTitle-col a')?.getAttribute('href');
-                            console.log(productName + datez);
-
-                            // Create an object with the extracted data for each row
-                            let rowData = {
-                                id,
-                                productName,
-                                date: datez,  // Store the actual date found in the row
-                                downloadLink,
-                                productURL, // Add the product URL to the object
-                            };
-                            console.log(rowData);
-                            rowDataArray.push(rowData);
-                        } else {
-                            console.log(row);
-                        }
-                    } catch (e) {
-                        console.error(e);
-                    }
-                }
-                return rowDataArray;
-            }, theDate.toISOString());  // Pass the date as a string
-
+                return (rows);
+            });// Pass the date as a string
+            console.log(data.length)
             console.log('Changelog entries for ', theDate);
-            console.log(data);
 
 
             // Process each title and extract relevant information
