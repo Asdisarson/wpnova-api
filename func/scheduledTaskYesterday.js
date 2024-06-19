@@ -105,14 +105,15 @@ const scheduledTask = async (date = new Date()) => {
                 for (const row of rows) {
                     try {
 
-                        let date = new Date(row.querySelector('.awcpt-date').innerText);
+                        let datez = new Date(row.querySelector('.awcpt-date').innerText);
                     // This determanice date of the update
-                    if (theDate === date) {
+
+                    if (theDate === datez) {
                             let id = row.getAttribute('data-id');
                             let productName = row.querySelector('.awcpt-title').innerText;
                             let downloadLink = row.querySelector('.awcpt-shortcode-wrap a').getAttribute('href');
                             let productURL = row.querySelector('.awcpt-prdTitle-col a').getAttribute('href');
-                            console.log(productName + date);
+                            console.log(productName + datez);
 
                         // Create an object with the extracted data for each row
                             let rowData = {
