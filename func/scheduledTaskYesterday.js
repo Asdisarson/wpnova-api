@@ -116,12 +116,12 @@ const scheduledTask = async (date = new Date()) => {
                     const theDate = new Date(theDateStr);  // Reconstruct the Date object
                     console.log(`Looking for rows matching the date: ${theDate}`);
 
-                    const rows = await waitForElement('.awcpt-row');
+                    const rows = await waitForElement('.awcpt-product-table');
                     console.log(`Found ${rows.length} rows`);
 
                     const rowDataArray = [];
                     for (const row of rows) {
-                        let datez = new Date(row.querySelector('.awcpt-date').innerText);
+                        let datez = new Date(row.querySelector('tr.awcpt-date').innerText);
                         console.log(`Row date: ${datez}`);
 
                         try {
