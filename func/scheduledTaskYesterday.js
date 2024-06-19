@@ -96,7 +96,7 @@ const scheduledTask = async (date = new Date()) => {
             console.log('Going to the changelog page...');
             await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=100');
             console.log(date)
-            var theDate = new Date(date).toLocaleDateString('en-US', {
+            const theDate = new Date(date).toLocaleDateString('en-US', {
                     year: 'numeric',
                     month: 'long',
                     day: 'numeric',
@@ -107,17 +107,17 @@ const scheduledTask = async (date = new Date()) => {
                 const rowDataArray = [];
 
                 for (const row of rows) {
-                    var date = row.querySelector('.awcpt-date').innerText;
+                    let date = row.querySelector('.awcpt-date').innerText;
                     // This determanice date of the update
-                    if (theDate == date) {
+                    if (theDate === date) {
                         try {
-                        const id = row.getAttribute('data-id');
-                        const productName = row.querySelector('.awcpt-title').innerText;
-                        const downloadLink = row.querySelector('.awcpt-shortcode-wrap a').getAttribute('href');
-                        const productURL = row.querySelector('.awcpt-prdTitle-col a').getAttribute('href');
+                            let id = row.getAttribute('data-id');
+                            let productName = row.querySelector('.awcpt-title').innerText;
+                            let downloadLink = row.querySelector('.awcpt-shortcode-wrap a').getAttribute('href');
+                            let productURL = row.querySelector('.awcpt-prdTitle-col a').getAttribute('href');
 
                         // Create an object with the extracted data for each row
-                        const rowData = {
+                            let rowData = {
                             id,
                             productName,
                             date,
