@@ -103,7 +103,7 @@ const scheduledTask = async (date = new Date()) => {
                 });
             console.log(theDate);
             const data = await page.evaluate((theDate) => {
-                const rows = document.querySelectorAll('tr.awcpt-row');
+                const rows = document.querySelectorAll('.awcpt-row');
                 const rowDataArray = [];
 
                 for (const row of rows) {
