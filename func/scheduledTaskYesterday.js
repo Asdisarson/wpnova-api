@@ -42,8 +42,7 @@ const scheduledTask = async (date = new Date()) => {
         // Launch Puppeteer browser
         console.log('Launching Puppeteer browser...');
         const browser = await puppeteer.launch({
-            headless: true,
-            defaultViewport: null,
+            headless: true
         });
         if (!fs.existsSync('./public/downloads/')) {
             fs.mkdirSync('./public/downloads/', {recursive: true});
@@ -70,18 +69,28 @@ const scheduledTask = async (date = new Date()) => {
             }
 
 
+            try {
+                // Fill in the login credentials
+                console.log('Typing username and password...');
+                await page.type('#username', process.env.USERNAME);
+                await page.type('#password', process.env.PASSWORD);
+            }
+            catch (e) {
+                console.error(e);
+            }
 
-            // Fill in the login credentials
-            console.log('Typing username and password...');
-            await page.type('#username', process.env.USERNAME);
-            await page.type('#password', process.env.PASSWORD);
+           try {
+               // Click the login button and wait for navigation
+               console.log('Clicking the login button...');
+               await Promise.all([
+                   page.waitForNavigation(),
+                   page.click('.button.woocommerce-button.woocommerce-form-login__submit'),
+               ]);
+           }
+           catch (err) {
+               console.error(err);
+           }
 
-            // Click the login button and wait for navigation
-            console.log('Clicking the login button...');
-            await Promise.all([
-                page.waitForNavigation(),
-                page.click('.button.woocommerce-button.woocommerce-form-login__submit'),
-            ]);
 
             // Go to the changelog page
             console.log('Going to the changelog page...');
