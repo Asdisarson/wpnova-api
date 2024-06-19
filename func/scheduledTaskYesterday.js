@@ -108,7 +108,7 @@ const scheduledTask = async (date = new Date()) => {
                         let datez = new Date(row.querySelector('.awcpt-date').innerText);
                     // This determanice date of the update
                         console.log(datez);
-                    if (theDate === datez) {
+                    if (theDate.toISOString() == datez.toISOString()) {
                             let id = row.getAttribute('data-id');
                             let productName = row.querySelector('.awcpt-title').innerText;
                             let downloadLink = row.querySelector('.awcpt-shortcode-wrap a').getAttribute('href');
