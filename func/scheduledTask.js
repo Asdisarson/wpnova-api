@@ -64,8 +64,8 @@ const scheduledTask = async () => {
 
             // Fill in the login credentials
             console.log('Typing username and password...');
-            await page.type('#username', process.env.USERNAME);
-            await page.type('#password', process.env.PASSWORD);
+            await page.keyboard.type('#username', process.env.USERNAME);
+            await page.keyboard.type('#password', process.env.PASSWORD);
 
             // Click the login button and wait for navigation
             console.log('Clicking the login button...');
