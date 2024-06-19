@@ -38,6 +38,7 @@ const scheduledTask = async (date = new Date()) => {
     const db = new JSONdb(dbPath);
     db.JSON({});
     let list = [];
+    let error = [];
     try {
         // Launch Puppeteer browser
         console.log('Launching Puppeteer browser...');
@@ -105,7 +106,6 @@ const scheduledTask = async (date = new Date()) => {
             const data = await page.evaluate((theDate) => {
                 const rows = document.querySelectorAll('.awcpt-row');
                 const rowDataArray = [];
-
                 for (const row of rows) {
                     let date = row.querySelector('.awcpt-date').innerText;
                     // This determanice date of the update
@@ -115,6 +115,7 @@ const scheduledTask = async (date = new Date()) => {
                             let productName = row.querySelector('.awcpt-title').innerText;
                             let downloadLink = row.querySelector('.awcpt-shortcode-wrap a').getAttribute('href');
                             let productURL = row.querySelector('.awcpt-prdTitle-col a').getAttribute('href');
+                            console.log(productName + date);
 
                         // Create an object with the extracted data for each row
                             let rowData = {
@@ -186,7 +187,7 @@ const scheduledTask = async (date = new Date()) => {
 
             // Process each title and download the files
             let fileCounter = 0;
-
+            let errorCounter = 0;
             for (let i = 0; i < data.length; i++) {
                 console.log(`Starting download for file ${i + 1} of ${data.length}...`);
                 try {
@@ -209,46 +210,73 @@ const scheduledTask = async (date = new Date()) => {
                     var modifiedString = data[i].slug.replace(/-download$/, "");
                     modifiedString = data[i].slug.replace(/download-/, "");
                     var filename = `${modifiedString}.zip`;
-                    console.log('Filename:', filename);
 
                     // Set the file path
                     const filePath = path.join('./public/downloads/', filename);
-                    console.log('File path:', filePath);
                     touch(filePath);
                     // Download the file and save it to the specified path
                     await pipeline(response.data, fs.createWriteStream(filePath));
-                    console.log(`Downloaded: ${filename}`);
 
                     // Update the titles array with the filename and file path
                     data[i].filename = filename;
                     data[i].filePath = filePath;
 
                     data[i].fileUrl = path.join(process.env.DOWNLOAD_URL, filename);
-                    console.log('object: ', data[i])
+                    console.log('Download Successful: ', data[i].productName)
                     fileCounter++;
                     list.push(data[i]);
                 } catch (e) {
+                    errorCounter++;
                     console.error(`Failed to download from link: ${data[i].downloadLink}`);
                     console.error(e);
+                    error.push(data[i]);
+
                 }
 
             }
 
             console.log('Downloaded files:', fileCounter);
+            console.log('Errors:', errorCounter);
             // Close the Puppeteer browser
             await browser.close();
+
             console.log('Browser closed.');
-            db.JSON(list);
-            db.sync();
-            touch('data.csv');
-            convertJsonToCsv(list, './public/data.csv', (err) => {
-                if (err) {
-                    console.error('Error:', err);
-                } else {
-                    console.log('CSV file has been saved.');
-                }
-            });
+            try{
+                touch('error.csv');
+                convertJsonToCsv(error, './public/error.csv', (err) => {
+                    if (err) {
+                        console.error('Error:', err);
+                    } else {
+                        console.log('CSV file has been saved.');
+                    }
+                });
+
+            }
+            catch (err) {
+                console.error('An error occurred:');
+                console.error(err);
+                return err;
+            }
+            try{
+                db.JSON(list);
+                db.sync();
+                touch('data.csv');
+                convertJsonToCsv(list, './public/data.csv', (err) => {
+                    if (err) {
+                        console.error('Error:', err);
+                    } else {
+                        console.log('CSV file has been saved.');
+                    }
+                });
+
+            }
+            catch (err) {
+                console.error('An error occurred:');
+                console.error(err);
+                return err;
+            }
             return list.length
+
         } catch (err) {
             console.error('An error occurred:');
             console.error(err);
