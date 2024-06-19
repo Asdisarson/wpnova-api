@@ -40,4 +40,4 @@ RUN npm init -y &&  \
 # Run everything after as non-privileged user.
 USER pptruser
 
-CMD ["node .bin/www"]
+CMD ["npm install"]
