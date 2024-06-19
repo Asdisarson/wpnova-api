@@ -19,11 +19,12 @@ RUN git clone https://github.com/Asdisarson/wpnova-api.git /home/node/fetchapi.w
 # Set the working directory
  RUN chmod +x /home/node/fetchapi.wpnova.io
 ENTRYPOINT ["fetchapi-wpnova-io", "--"]
+WORKDIR /home/node/fetchapi.wpnova.io
 
 # Uncomment to skip the chromium download when installing puppeteer. If you do,
 # you'll need to launch puppeteer with:
 #browser.launch({executablePath: 'google-chrome-stable'})
-ENV PUPPETEER_SKIP_DOWNLOAD true
+#ENV PUPPETEER_SKIP_DOWNLOAD true
 
 # Install puppeteer so it's available in the container.
 RUN npm init -y &&  \
@@ -40,4 +41,4 @@ RUN npm init -y &&  \
 # Run everything after as non-privileged user.
 USER pptruser
 
-CMD ["node", "/home/node/fetchapi.wpnova.io"]
+CMD ["node", ".bin/www"]
