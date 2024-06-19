@@ -14,7 +14,7 @@ RUN apt-get update \
 
 # If running Docker >= 1.13.0 use docker run's --init arg to reap zombie processes, otherwise
 # uncomment the following lines to have `dumb-init` as PID 1
- ADD https://github.com/Asdisarson/wpnova-api.git /home/node/fetchapi.wpnova.io
+ ADD https://github.com/Asdisarson/wpnova-api.git /home/node/dumb-init
  RUN chmod +x /usr/local/bin/dumb-init
  ENTRYPOINT ["dumb-init", "--"]
 
