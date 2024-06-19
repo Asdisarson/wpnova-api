@@ -90,8 +90,8 @@ const scheduledTask = async (date = new Date()) => {
 
             // Go to the changelog page
             console.log('Going to the changelog page...');
-            await Promise.all ( page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=250'));
-            console.log(date)
+            await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=250');
+                console.log(date)
             console.log('Changelog page...');
 
 
