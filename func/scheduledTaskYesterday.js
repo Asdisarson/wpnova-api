@@ -90,35 +90,33 @@ const scheduledTask = async (date = new Date()) => {
 
             // Go to the changelog page
             console.log('Going to the changelog page...');
-            await Promise.all ([ await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=1000')]);
+            await Promise.all ( page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=250'));
             console.log(date)
             console.log('Changelog page...');
 
-            let theDate = new Date(date)
+
+            var theDate = new Date(date).toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+            });
             console.log(theDate);
             const data = await page.evaluate((theDate) => {
-                const rows = document.querySelectorAll('.awcpt-row');
-                console.log('Resolving to the changelog page...');
+                const rows = document.querySelectorAll('tr.awcpt-row');
                 const rowDataArray = [];
+
                 for (const row of rows) {
-
-                        let datex = new Date(theDate);
-                        let datez = new Date(row.querySelector('.awcpt-date').innerText);
+                    var date = row.querySelector('.awcpt-date').innerText;
                     // This determanice date of the update
-                       console.log((datex === datez) + " " + (datex == datez))
-                    console.log(datex.toTimeString());
-                       console.log(datez.toTimeString());
-                    if (datex.toTimeString() == datez.toTimeString()||datex.toTimeString() === datez.toTimeString()||datex==datez||datex===datez) {
-
+                    if (theDate === date) {
                         try {
-                            let id = row.getAttribute('data-id');
-                            let productName = row.querySelector('.awcpt-title').innerText;
-                            let downloadLink = row.querySelector('.awcpt-shortcode-wrap a').getAttribute('href');
-                            let productURL = row.querySelector('.awcpt-prdTitle-col a').getAttribute('href');
-                            console.log(productName + datez);
+                            const id = row.getAttribute('data-id');
+                            const productName = row.querySelector('.awcpt-title').innerText;
+                            const downloadLink = row.querySelector('.awcpt-shortcode-wrap a').getAttribute('href');
+                            const productURL = row.querySelector('.awcpt-prdTitle-col a').getAttribute('href');
 
                             // Create an object with the extracted data for each row
-                            let rowData = {
+                            const rowData = {
                                 id,
                                 productName,
                                 date,
@@ -126,13 +124,12 @@ const scheduledTask = async (date = new Date()) => {
                                 productURL, // Add the product URL to the object
                             };
 
-                            rowDataArray.push(rowData);
-
-                        } catch (e) {
-
+                            rowDataArray.push(rowData); }
+                        catch (e) {
                             console.error(e);
                         }
                     }
+
                 }
                 return rowDataArray;
             }, theDate);
