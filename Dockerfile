@@ -23,8 +23,8 @@ WORKDIR /home/node/fetchapi.wpnova.io
 
 # Install Puppeteer and related packages
 RUN npm install puppeteer puppeteer-core @puppeteer/browsers && \
-    (node -e "const puppeteer = require('puppeteer'); console.log(`Puppeteer version: ${puppeteer.version()}`);" > PUPPETEER_VERSION) && \
-    (node -e "const puppeteer = require('puppeteer'); console.log(`Executable path: ${puppeteer.executablePath()}`);" > EXECUTABLE_PATH)
+    node -e "const puppeteer = require('puppeteer'); console.log(\`Puppeteer version: \${puppeteer.version()}\`);" > PUPPETEER_VERSION && \
+    node -e "const puppeteer = require('puppeteer'); console.log(\`Executable path: \${puppeteer.executablePath()}\`);" > EXECUTABLE_PATH
 
 # Install the repository's npm dependencies
 RUN npm install
