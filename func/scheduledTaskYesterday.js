@@ -94,7 +94,7 @@ const scheduledTask = async (date = new Date()) => {
 
             // Go to the changelog page
             console.log('Going to the changelog page...');
-            await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=10Ö0');
+            await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=1000');
             console.log(date)
             var theDate = new Date(date).toLocaleDateString('en-US', {
                     year: 'numeric',
