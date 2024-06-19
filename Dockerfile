@@ -1,4 +1,4 @@
-FROM node:20-slim
+FROM node:20
 
 # Install necessary dependencies
 RUN apt-get update \
@@ -8,7 +8,11 @@ RUN apt-get update \
     && apt-get update \
     && apt-get install -y google-chrome-stable git fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-kacst fonts-freefont-ttf libxss1 \
       --no-install-recommends \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install -y node \
+    && node install npm@latest
 
 
 # Set up the application directory and permissions
@@ -22,7 +26,7 @@ RUN git clone https://github.com/Asdisarson/wpnova-api.git . \
 
 # Install dependencies and configure environment as root
 RUN npm init -y && \
-    npm i puppeteer
+    npm i puppeteer@latest
 
 # Ensure Puppeteer's cache directory exists and has correct permissions
 RUN mkdir -p /home/node/.cache \
