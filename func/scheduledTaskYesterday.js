@@ -107,7 +107,7 @@ const scheduledTask = async (date = new Date()) => {
 
                         let datez = new Date(row.querySelector('.awcpt-date').innerText);
                     // This determanice date of the update
-
+                        console.log(datez);
                     if (theDate === datez) {
                             let id = row.getAttribute('data-id');
                             let productName = row.querySelector('.awcpt-title').innerText;
@@ -126,9 +126,13 @@ const scheduledTask = async (date = new Date()) => {
 
                         rowDataArray.push(rowData);
                     }
+                    else {
+                        console.log(row);
+                    }
                     }
 
                         catch (e) {
+
                             console.error(e);
                         }
 
