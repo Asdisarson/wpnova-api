@@ -11,7 +11,6 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get update \
     && apt-get upgrade -y \
-    && apt-get install -y nodejs \
     && npm install npm@latest
 
 
