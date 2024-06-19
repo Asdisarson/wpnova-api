@@ -29,16 +29,11 @@ RUN npm install puppeteer puppeteer-core @puppeteer/browsers && \
 # Install the repository's npm dependencies
 RUN npm install
 
-# Switch back to the root user to copy the entrypoint script and change permissions
-USER root
-
-# Copy the entrypoint script (assume you have docker-entrypoint.sh in your context)
-COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+# Expose the port the app runs on
+EXPOSE 3000
 
 # Switch back to the node user
 USER node
 
-# Set the entrypoint and default command
-ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+# Start the app
 CMD ["node", "bin/www"]
