@@ -12,7 +12,7 @@ RUN apt-get update \
     && apt-get update \
     && apt-get upgrade -y \
     && apt-get install -y nodejs \
-    && node install npm@latest
+    && npm install npm@latest
 
 
 # Set up the application directory and permissions
