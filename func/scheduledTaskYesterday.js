@@ -91,70 +91,51 @@ const scheduledTask = async (date = new Date()) => {
             // Go to the changelog page
             console.log('Going to the changelog page...');
             await Promise.all ([ await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=1000')]);
-            let theDate = new Date(date);
+            console.log(date)
+            console.log('Changelog page...');
+
+            let theDate = new Date(date)
             console.log(theDate);
-            const data = await page.evaluate(async (theDateStr) => {
-                function waitForElement(selector, timeout = 30000) {
-                    return new Promise((resolve, reject) => {
-                        const interval = 100;  // ms
-                        const endTime = Date.now() + timeout;
-                        const check = () => {
-                            const elements = document.querySelectorAll(selector);
-                            if (elements.length > 0) {
-                                resolve(elements);
-                            } else if (Date.now() < endTime) {
-                                setTimeout(check, interval);
-                            } else {
-                                reject(new Error(`Timeout waiting for ${selector}`));
-                            }
-                        };
-                        check();
-                    });
-                }
+            const data = await page.evaluate((theDate) => {
+                const rows = document.querySelectorAll('.awcpt-row');
+                console.log('Resolving to the changelog page...');
+                const rowDataArray = [];
+                for (const row of rows) {
 
-                try {
-                    const theDate = new Date(theDateStr);  // Reconstruct the Date object
-                    console.log(`Looking for rows matching the date: ${theDate}`);
-
-                    const rows = await waitForElement('.awcpt-product-table');
-                    console.log(`Found ${rows.length} rows`);
-
-                    const rowDataArray = [];
-                    for (const row of rows) {
-                        let datez = new Date(row.querySelector('tr.awcpt-date').innerText);
-                        console.log(`Row date: ${datez}`);
+                        let datex = new Date(theDate);
+                        let datez = new Date(row.querySelector('.awcpt-date').innerText);
+                    // This determanice date of the update
+                       console.log((datex === datez) + " " + (datex == datez))
+                    console.log(datex.toTimeString());
+                       console.log(datez.toTimeString());
+                    if (datex.toTimeString() == datez.toTimeString()||datex.toTimeString() === datez.toTimeString()||datex==datez||datex===datez) {
 
                         try {
-                            if (theDate.getTime() === datez.getTime()) {
-                                let id = row.getAttribute('data-id');
-                                let productName = row.querySelector('.awcpt-title').innerText;
-                                let downloadLink = row.querySelector('.awcpt-shortcode-wrap a')?.getAttribute('href');
-                                let productURL = row.querySelector('.awcpt-prdTitle-col a')?.getAttribute('href');
-                                console.log(`Match found: ${productName} on ${datez}`);
+                            let id = row.getAttribute('data-id');
+                            let productName = row.querySelector('.awcpt-title').innerText;
+                            let downloadLink = row.querySelector('.awcpt-shortcode-wrap a').getAttribute('href');
+                            let productURL = row.querySelector('.awcpt-prdTitle-col a').getAttribute('href');
+                            console.log(productName + datez);
 
-                                // Create an object with the extracted data for each row
-                                let rowData = {
-                                    id,
-                                    productName,
-                                    date: datez,  // Store the actual date found in the row
-                                    downloadLink,
-                                    productURL, // Add the product URL to the object
-                                };
-                                console.log(rowData);
-                                rowDataArray.push(rowData);
-                            } else {
-                                console.log(`Date mismatch: ${theDate} vs ${datez}`);
-                            }
+                            // Create an object with the extracted data for each row
+                            let rowData = {
+                                id,
+                                productName,
+                                date,
+                                downloadLink,
+                                productURL, // Add the product URL to the object
+                            };
+
+                            rowDataArray.push(rowData);
+
                         } catch (e) {
-                            console.error(`Error processing row: ${e}`);
+
+                            console.error(e);
                         }
                     }
-                    return rowDataArray;
-                } catch (e) {
-                    console.error(`Error in evaluate function: ${e}`);
-                    return [];
                 }
-            }, theDate.toISOString());  // Pass the date as a string
+                return rowDataArray;
+            }, theDate);
 
             console.log('Changelog entries for ', theDate);
             console.log(data);
