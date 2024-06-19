@@ -44,8 +44,6 @@ const scheduledTask = async (date = new Date()) => {
         const browser = await puppeteer.launch({
             headless: true,
             defaultViewport: null,
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu', '--headless'],
-            userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.97 Safari/537.36'
         });
         if (!fs.existsSync('./public/downloads/')) {
             fs.mkdirSync('./public/downloads/', {recursive: true});
