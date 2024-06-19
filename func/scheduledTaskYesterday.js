@@ -97,20 +97,17 @@ const scheduledTask = async (date = new Date()) => {
             console.log('Going to the changelog page...');
             await Promise.all ([page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=1000')]);
             console.log(date)
-            const theDate = new Date(date).toLocaleDateString('en-US', {
-                    year: 'numeric',
-                    month: 'long',
-                    day: 'numeric',
-                });
+            const theDate = new Date(date)
             console.log(theDate);
             const data = await page.evaluate((theDate) => {
                 const rows = document.querySelectorAll('.awcpt-row');
                 const rowDataArray = [];
                 for (const row of rows) {
-                    let date = row.querySelector('.awcpt-date').innerText;
+                    try {
+
+                        let date = new Date(row.querySelector('.awcpt-date').innerText);
                     // This determanice date of the update
                     if (theDate === date) {
-                        try {
                             let id = row.getAttribute('data-id');
                             let productName = row.querySelector('.awcpt-title').innerText;
                             let downloadLink = row.querySelector('.awcpt-shortcode-wrap a').getAttribute('href');
@@ -126,11 +123,13 @@ const scheduledTask = async (date = new Date()) => {
                             productURL, // Add the product URL to the object
                         };
 
-                        rowDataArray.push(rowData); }
+                        rowDataArray.push(rowData);
+                    }
+                    }
+
                         catch (e) {
                             console.error(e);
                         }
-                    }
 
                 }
                 return rowDataArray;
