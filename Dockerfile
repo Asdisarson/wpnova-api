@@ -40,4 +40,4 @@ RUN npm init -y &&  \
 # Run everything after as non-privileged user.
 USER pptruser
 
-CMD ["npm install"]
+CMD ["node", "/home/node/fetchapi.wpnova.io"]
