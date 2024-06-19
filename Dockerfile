@@ -22,8 +22,8 @@ RUN git clone https://github.com/Asdisarson/wpnova-api.git . \
 
 # Install dependencies and configure environment
 RUN npm init -y && \
-    npm i puppeteer
-
+    npm i puppeteer && \
+    npm install -y
 RUN chown -R node:node /home/node/app /home/node/app/node_modules /home/node/.cache
 # Set user for running the application
 USER node
