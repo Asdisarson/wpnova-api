@@ -93,8 +93,7 @@ const scheduledTask = async (date = new Date()) => {
             await Promise.all ([ await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=1000')]);
             console.log(date)
             console.log('Changelog page...');
-
-            let theDate = new Date(date)
+            let theDate = new Date(date);
             console.log(theDate);
             const data = await page.evaluate((theDate) => {
                 const rows = document.querySelectorAll('.awcpt-row');
@@ -102,38 +101,34 @@ const scheduledTask = async (date = new Date()) => {
                 console.log(rows.length);
                 const rowDataArray = [];
                 for (const row of rows) {
+                    let dateText = row.querySelector('.awcpt-date')?.innerText;
+                    let datez = new Date(dateText);
+                    console.log(datez);
 
-
-                        let datez = new Date(row.querySelector('.awcpt-date').innerText);
-                    // This determanice date of the update
-                        console.log(datez);
-                    try {
-                        if (theDate == datez) {
+                    if (theDate.getTime() === datez.getTime()) {
+                        try {
                             let id = row.getAttribute('data-id');
-                            let productName = row.querySelector('.awcpt-title').innerText;
-                            let downloadLink = row.querySelector('.awcpt-shortcode-wrap a').getAttribute('href');
-                            let productURL = row.querySelector('.awcpt-prdTitle-col a').getAttribute('href');
-                            console.log(productName + datez);
+                            let productName = row.querySelector('.awcpt-title')?.innerText || 'N/A';
+                            let downloadLink = row.querySelector('.awcpt-shortcode-wrap a')?.getAttribute('href') || 'N/A';
+                            let productURL = row.querySelector('.awcpt-prdTitle-col a')?.getAttribute('href') || 'N/A';
+                            console.log(productName + " " + datez);
 
                             // Create an object with the extracted data for each row
                             let rowData = {
                                 id,
                                 productName,
-                                date,
+                                date: dateText,
                                 downloadLink,
-                                productURL, // Add the product URL to the object
+                                productURL,
                             };
                             console.log(rowData);
                             rowDataArray.push(rowData);
-                        } else {
-                            console.log(row);
-                        }
-                    }
-                        catch (e) {
-
+                        } catch (e) {
                             console.error(e);
                         }
-
+                    } else {
+                        console.log(row);
+                    }
                 }
                 return rowDataArray;
             }, theDate);
