@@ -97,7 +97,7 @@ const scheduledTask = async (date = new Date()) => {
             console.log('Going to the changelog page...');
             await Promise.all ([ await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=1000')]);
             console.log(date)
-            const theDate = new Date(date)
+            let theDate = new Date(date)
             console.log(theDate);
             const data = await page.evaluate((theDate) => {
                 const rows = document.querySelectorAll('.awcpt-row');
@@ -108,7 +108,7 @@ const scheduledTask = async (date = new Date()) => {
                         let datez = new Date(row.querySelector('.awcpt-date').innerText);
                     // This determanice date of the update
                         console.log(datez);
-                    if (theDate.toISOString() == datez.toISOString()) {
+                    if (theDate == datez) {
                             let id = row.getAttribute('data-id');
                             let productName = row.querySelector('.awcpt-title').innerText;
                             let downloadLink = row.querySelector('.awcpt-shortcode-wrap a').getAttribute('href');
