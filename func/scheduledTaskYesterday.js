@@ -70,15 +70,18 @@ const scheduledTask = async (date = new Date()) => {
             }
 
 
-            try {
-                // Fill in the login credentials
-                console.log('Typing username and password...');
-                await page.type('#username', process.env.USERNAME);
-                await page.type('#password', process.env.PASSWORD);
-            }
-            catch (e) {
-                console.error(e);
-            }
+
+            var username =  process.env.USERNAME;
+            var password = process.env.PASSWORD;
+            // Fill in the login credentials
+            console.log('Typing username...');
+
+            await page.type('#username',username.toString());
+
+            console.log('Typing password...');
+            await page.type('#password',password.toString());
+            // Click the login button and wait for navigation
+            console.log('Clicking the login button...');
 
            try {
                // Click the login button and wait for navigation
@@ -103,11 +106,12 @@ const scheduledTask = async (date = new Date()) => {
                 const rows = document.querySelectorAll('tr.awcpt-row');
                 const rowDataArray = [];
                 for (const row of rows) {
-                    try {
+
 
                         let datez = new Date(row.querySelector('.awcpt-date').innerText);
                     // This determanice date of the update
                         console.log(datez);
+                    try {
                     if (theDate == datez) {
                             let id = row.getAttribute('data-id');
                             let productName = row.querySelector('.awcpt-title').innerText;

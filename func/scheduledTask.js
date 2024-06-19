@@ -61,12 +61,15 @@ const scheduledTask = async () => {
             console.log('Going to the login page...');
             await page.goto('https://www.realgpl.com/my-account/');
 
-
+            var username =  process.env.USERNAME;
+            var password = process.env.PASSWORD;
             // Fill in the login credentials
-            console.log('Typing username and password...');
-            await page.keyboard.type('#username', process.env.USERNAME);
-            await page.keyboard.type('#password', process.env.PASSWORD);
+            console.log('Typing username...');
 
+            await page.type('#username',username.toString());
+
+            console.log('Typing password...');
+            await page.type('#password',password.toString());
             // Click the login button and wait for navigation
             console.log('Clicking the login button...');
             await Promise.all([
