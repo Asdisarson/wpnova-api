@@ -11,7 +11,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get update \
     && apt-get upgrade -y \
-    && npm install npm@latest
+    &&  npm install -g npm@10.8.1
 
 
 # Set up the application directory and permissions
