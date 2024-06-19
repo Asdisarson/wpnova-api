@@ -10,6 +10,7 @@ RUN apt-get update \
       --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
+
 # Set up the application directory and permissions
 RUN mkdir -p /home/node/app
 WORKDIR /home/node/app
@@ -21,11 +22,13 @@ RUN git clone https://github.com/Asdisarson/wpnova-api.git . \
 
 # Install dependencies and configure environment
 RUN npm init -y && \
-    npm i puppeteer && npm install
-
+    npm i puppeteer
 
 # Set user for running the application
 USER node
+
+# Configure Puppeteer to use installed Chrome
+ENV PUPPETEER_EXECUTABLE_PATH="/usr/bin/google-chrome-stable"
 
 # Default command to start the application
 CMD ["node", ".bin/www"]
