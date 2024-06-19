@@ -40,4 +40,4 @@ RUN npm init -y &&  \
 # Run everything after as non-privileged user.
 USER pptruser
 
-CMD ["google-chrome-stable"]
+CMD ["node .bin/www"]
