@@ -15,16 +15,19 @@ RUN apt-get update \
 RUN mkdir -p /home/node/app
 WORKDIR /home/node/app
 
+
 # Clone repository and set permissions
 RUN git clone https://github.com/Asdisarson/wpnova-api.git . \
-    && (chmod +x .bin/www || true) \
     && chown -R node:node /home/node/app
 
-# Install dependencies and configure environment
+# Install dependencies and configure environment as root
 RUN npm init -y && \
-    npm i puppeteer && \
-    npm install -y
-RUN chown -R node:node /home/node/app /home/node/app/node_modules /home/node/.cache
+    npm i puppeteer
+
+# Ensure Puppeteer's cache directory exists and has correct permissions
+RUN mkdir -p /home/node/.cache \
+    && chown -R node:node /home/node/app /home/node/app/node_modules /home/node/.cache
+
 # Set user for running the application
 USER node
 
@@ -33,3 +36,4 @@ ENV PUPPETEER_EXECUTABLE_PATH="/usr/bin/google-chrome-stable"
 
 # Default command to start the application
 CMD ["node", ".bin/www"]
+
