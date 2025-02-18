@@ -7,11 +7,6 @@ const stream = require('stream');
 const {promisify} = require('util');
 const pipeline = promisify(stream.pipeline);
 const convertJsonToCsv = require('./convertJsonToCsv');
-
-// Maximum number of login attempts
-const MAX_LOGIN_ATTEMPTS = 3;
-const RETRY_DELAY = 5000; // 5 seconds
-
 const ensureDirectoryExistence = (filePath) => {
     const dirname = path.dirname(filePath);
     if (fs.existsSync(dirname)) {
@@ -37,161 +32,131 @@ function touch(filename) {
     }
 }
 
-async function attemptLogin(page, username, password, attempt = 1) {
-    console.log(`Login attempt ${attempt} of ${MAX_LOGIN_ATTEMPTS}...`);
-    
-    try {
-        // Fill in credentials
-        console.log('Entering username...');
-        await page.type('#username', username.toString());
-        
-        console.log('Entering password...');
-        await page.type('#password', password.toString());
-        
-        // Handle CAPTCHA
-        console.log('Processing CAPTCHA...');
-        await new Promise(async (resolve) => {
-            try {
-                await page.waitForSelector('.aiowps-captcha-equation');
-                console.log('CAPTCHA element found');
-                
-                const captchaText = await page.$eval('.aiowps-captcha-equation strong', el => el.textContent);
-                console.log('CAPTCHA equation found:', captchaText);
-                
-                const equation = captchaText.split('=')[0].trim();
-                
-                const wordToNumber = {
-                    'zero': 0, 'one': 1, 'two': 2, 'three': 3, 'four': 4,
-                    'five': 5, 'six': 6, 'seven': 7, 'eight': 8, 'nine': 9,
-                    'ten': 10, 'eleven': 11, 'twelve': 12, 'thirteen': 13,
-                    'fourteen': 14, 'fifteen': 15, 'sixteen': 16,
-                    'seventeen': 17, 'eighteen': 18, 'nineteen': 19, 'twenty': 20
-                };
-
-                const parts = equation.toLowerCase().split(/\s+/);
-                console.log('Parsed equation parts:', parts);
-                
-                const num1 = wordToNumber[parts[0]] || parseInt(parts[0]);
-                const operator = parts[1];
-                const num2 = wordToNumber[parts[2]] || parseInt(parts[2]);
-                
-                let result;
-                switch(operator) {
-                    case '+':
-                    case 'plus':
-                        result = num1 + num2;
-                        break;
-                    case '-':
-                    case '−':
-                    case 'minus':
-                        result = num1 - num2;
-                        break;
-                    case '×':
-                    case '*':
-                    case 'times':
-                        result = num1 * num2;
-                        break;
-                    default:
-                        throw new Error('Unknown operator: ' + operator);
-                }
-
-                console.log('Solved CAPTCHA:', equation, '=', result);
-                
-                const captchaInput = await page.$('.aiowps-captcha-answer');
-                await captchaInput.type(result.toString());
-                console.log('Entered CAPTCHA solution');
-                
-                resolve();
-            } catch (error) {
-                console.error('CAPTCHA handling error:', error);
-                resolve();
-            }
-        });
-
-        // Click login button and wait for navigation
-        console.log('Submitting login form...');
-        await Promise.all([
-            page.waitForNavigation(),
-            page.click('.button.woocommerce-button.woocommerce-form-login__submit'),
-        ]);
-
-        // Check if login was successful by looking for a success indicator
-        const isLoggedIn = await page.evaluate(() => {
-            return !document.querySelector('.woocommerce-error');
-        });
-
-        if (isLoggedIn) {
-            console.log('Login successful!');
-            return true;
-        } else {
-            console.log('Login failed - error message present');
-            throw new Error('Login failed');
-        }
-    } catch (error) {
-        console.error(`Login attempt ${attempt} failed:`, error.message);
-        
-        if (attempt < MAX_LOGIN_ATTEMPTS) {
-            console.log(`Waiting ${RETRY_DELAY/1000} seconds before next attempt...`);
-            await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
-            return attemptLogin(page, username, password, attempt + 1);
-        } else {
-            throw new Error(`Failed to login after ${MAX_LOGIN_ATTEMPTS} attempts`);
-        }
-    }
-}
-
 const scheduledTask = async (date = new Date()) => {
-    console.log('Starting scheduled task...');
-    console.log('Target date:', date);
-    
     const dbPath = path.join(__dirname, 'files.json');
     ensureDirectoryExistence(dbPath);
     const db = new JSONdb(dbPath);
     db.JSON({});
     let list = [];
     let error = [];
-
     try {
-        console.log('Launching browser...');
+        // Launch Puppeteer browser
+        console.log('Launching Puppeteer browser...');
         const browser = await puppeteer.launch({
             headless: true
         });
-
         if (!fs.existsSync('./public/downloads/')) {
-            console.log('Creating downloads directory...');
             fs.mkdirSync('./public/downloads/', {recursive: true});
             touch('index.html');
         }
-
+        // Create a new page
         const page = await browser.newPage();
         page.setDefaultTimeout(0);
 
         try {
-            console.log('Navigating to login page...');
+            // Go to the login page
+            console.log('Going to the login page...');
             await page.goto('https://www.realgpl.com/my-account/');
 
+
+
             try {
-                console.log('Handling consent popup if present...');
+                //consent label
                 await Promise.all([
                     page.click('.fc-button-label'),
                 ]);
-                console.log('Consent popup handled');
             } catch (error) {
-                console.log('No consent popup found');
+                console.log('No Consent block')
             }
 
-            const username = process.env.USERNAME;
-            const password = process.env.PASSWORD;
-            
-            // Attempt login with retry logic
-            await attemptLogin(page, username, password);
+
+
+            var username =  process.env.USERNAME;
+            var password = process.env.PASSWORD;
+            // Fill in the login credentials
+            console.log('Typing username...');
+
+            await page.type('#username',username.toString());
+
+            console.log('Typing password...');
+            await page.type('#password',password.toString());
+
+            // Handle CAPTCHA
+            await new Promise(async (resolve) => {
+                try {
+                    // Wait for CAPTCHA element to be present
+                    await page.waitForSelector('.aiowps-captcha-equation');
+                    
+                    // Get the CAPTCHA equation text
+                    const captchaText = await page.$eval('.aiowps-captcha-equation strong', el => el.textContent);
+                    
+                    // Extract the equation parts (e.g., "nineteen − ten = ")
+                    const equation = captchaText.split('=')[0].trim();
+                    
+                    // Convert word numbers to digits and evaluate
+                    const wordToNumber = {
+                        'zero': 0, 'one': 1, 'two': 2, 'three': 3, 'four': 4,
+                        'five': 5, 'six': 6, 'seven': 7, 'eight': 8, 'nine': 9,
+                        'ten': 10, 'eleven': 11, 'twelve': 12, 'thirteen': 13,
+                        'fourteen': 14, 'fifteen': 15, 'sixteen': 16,
+                        'seventeen': 17, 'eighteen': 18, 'nineteen': 19, 'twenty': 20
+                    };
+
+                    // Split equation into parts
+                    const parts = equation.toLowerCase().split(/\s+/);
+                    
+                    // Convert words to numbers
+                    const num1 = wordToNumber[parts[0]] || parseInt(parts[0]);
+                    const operator = parts[1];
+                    const num2 = wordToNumber[parts[2]] || parseInt(parts[2]);
+                    
+                    // Calculate result
+                    let result;
+                    switch(operator) {
+                        case '+':
+                        case 'plus':
+                            result = num1 + num2;
+                            break;
+                        case '-':
+                        case '−': // This is an en dash
+                        case 'minus':
+                            result = num1 - num2;
+                            break;
+                        case '×':
+                        case '*':
+                        case 'times':
+                            result = num1 * num2;
+                            break;
+                        default:
+                            throw new Error('Unknown operator: ' + operator);
+                    }
+
+                    console.log('CAPTCHA equation:', equation, '=', result);
+                    
+                    // Get the CAPTCHA answer input field and enter result
+                    const captchaInput = await page.$('.aiowps-captcha-answer');
+                    await captchaInput.type(result.toString());
+                    
+                    resolve();
+                } catch (error) {
+                    console.log('CAPTCHA handling error:', error);
+                    resolve(); // Resolve anyway to continue with login
+                }
+            });
+
+            console.log('Clicking the login button...');
+               await Promise.all([
+                   page.waitForNavigation(),
+                   page.click('.button.woocommerce-button.woocommerce-form-login__submit'),
+               ]);
+
 
             // Go to the changelog page
             console.log('Going to the changelog page...');
-            await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=250');
-            
-            console.log(date)
+            await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=10');
+                console.log(date)
             console.log('Changelog page...');
+
 
             var theDate = new Date(date).toLocaleDateString('en-US', {
                 year: 'numeric',
