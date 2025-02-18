@@ -33,6 +33,8 @@ function touch(filename) {
     }
 }
 
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 /**
  * Handles the login process with retries
  * @param {Page} page - Puppeteer page object
@@ -74,7 +76,7 @@ async function handleLogin(page) {
                 console.log('Handling consent popup...');
                 await consentButton.click();
                 // Wait for consent animation to complete
-                await page.waitForTimeout(2500);
+                await delay(2500);
                 // Wait for any overlay to disappear
                 await page.waitForFunction(() => {
                     const overlay = document.querySelector('.fc-consent-overlay');
@@ -113,7 +115,7 @@ async function handleLogin(page) {
                         page.waitForSelector('.aiowps-captcha-equation', { visible: true, timeout: 30000 })
                     ]);
                     
-                    await page.waitForTimeout(3000); // Additional stability wait
+                    await delay(3000); // Additional stability wait
                 }
                 
                 // Get and log the current captcha equation before solving
@@ -148,14 +150,14 @@ async function handleLogin(page) {
                 ]);
                 
                 // Wait for post-login page to be fully loaded
-                await page.waitForTimeout(4000);
+                await delay(4000);
                 
                 // Verify login success
                 const errorMessage = await page.$('.woocommerce-error');
                 if (errorMessage) {
                     const error = await page.evaluate(el => el.textContent, errorMessage);
                     console.log('Login failed:', error.trim());
-                    if (attempt < 3) await page.waitForTimeout(5000);
+                    if (attempt < 3) await delay(5000);
                     continue;
                 }
                 
@@ -166,13 +168,13 @@ async function handleLogin(page) {
                 }
                 
                 console.log('Login status unclear - no error but not on account page');
-                if (attempt < 3) await page.waitForTimeout(5000);
+                if (attempt < 3) await delay(5000);
                 
             } catch (error) {
                 console.error(`Error during login attempt ${attempt}:`, error.message);
                 if (attempt < 3) {
                     console.log('Waiting before retry...');
-                    await page.waitForTimeout(3000);
+                    await delay(3000);
                 }
             }
         }
