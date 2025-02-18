@@ -34,56 +34,107 @@ function touch(filename) {
 }
 
 /**
- * Attempts to login with captcha solving
+ * Handles the login process with retries
  * @param {Page} page - Puppeteer page object
- * @returns {Promise<boolean>} - True if login successful, false otherwise
+ * @returns {Promise<boolean>} - True if login successful
  */
-async function attemptLogin(page) {
+async function handleLogin(page) {
+    console.log('Starting login process...');
+    
+    // Go to the login page
+    console.log('Navigating to login page...');
+    await page.goto('https://www.realgpl.com/my-account/', {
+        waitUntil: 'networkidle0',
+        timeout: 60000
+    });
+    
+    // Handle consent if present
     try {
-        var username = process.env.USERNAME;
-        var password = process.env.PASSWORD;
-        
-        // Fill in the login credentials
-        console.log('Typing username...');
-        await page.type('#username', username.toString());
-
-        console.log('Typing password...');
-        await page.type('#password', password.toString());
-
-        // Solve and fill in the captcha
-        console.log('Solving captcha...');
-        const html = await page.content();
-        const captchaSolution = extractAndSolveCaptcha(html);
-        console.log('Captcha equation:', captchaSolution.equation);
-        console.log('Captcha answer:', captchaSolution.answer);
-        await page.type('.aiowps-captcha-answer', captchaSolution.answer.toString());
-
-        console.log('Clicking the login button...');
-        await Promise.all([
-            page.waitForNavigation(),
-            page.click('.button.woocommerce-button.woocommerce-form-login__submit'),
-        ]);
-
-        // Check if login was successful by looking for error messages
-        const errorMessage = await page.$('.woocommerce-error');
-        if (errorMessage) {
-            console.log('Login failed - Error message found');
-            return false;
+        const consentButton = await page.$('.fc-button-label');
+        if (consentButton) {
+            console.log('Handling consent popup...');
+            await consentButton.click();
+            await page.waitForTimeout(1000); // Wait for animation
         }
-
-        // Additional check - look for elements that should only be visible after login
-        const loggedInElement = await page.$('.woocommerce-MyAccount-navigation');
-        if (!loggedInElement) {
-            console.log('Login failed - Not on account page');
-            return false;
-        }
-
-        console.log('Login successful!');
-        return true;
     } catch (error) {
-        console.error('Login attempt failed:', error);
-        return false;
+        console.log('No consent popup found');
     }
+    
+    // Try login up to 3 times
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        console.log(`\nLogin attempt ${attempt} of 3`);
+        
+        try {
+            // Clear any existing input before retry
+            if (attempt > 1) {
+                console.log('Clearing previous input...');
+                await page.evaluate(() => {
+                    document.querySelector('#username').value = '';
+                    document.querySelector('#password').value = '';
+                    const captchaInput = document.querySelector('.aiowps-captcha-answer');
+                    if (captchaInput) captchaInput.value = '';
+                });
+                await page.reload({ waitUntil: 'networkidle0' });
+                await page.waitForTimeout(2000); // Wait for page to stabilize
+            }
+            
+            // Get and log the current captcha equation before solving
+            const captchaElement = await page.$('.aiowps-captcha-equation strong');
+            if (captchaElement) {
+                const captchaText = await page.evaluate(el => el.textContent, captchaElement);
+                console.log('Current captcha:', captchaText.trim());
+            }
+            
+            // Fill in credentials
+            console.log('Entering credentials...');
+            await page.type('#username', process.env.USERNAME);
+            await page.type('#password', process.env.PASSWORD);
+            
+            // Handle captcha
+            console.log('Solving captcha...');
+            const html = await page.content();
+            const captchaSolution = extractAndSolveCaptcha(html);
+            console.log('Captcha equation:', captchaSolution.equation);
+            console.log('Captcha answer:', captchaSolution.answer);
+            
+            await page.type('.aiowps-captcha-answer', captchaSolution.answer.toString());
+            
+            // Submit form and wait for navigation
+            console.log('Submitting login form...');
+            await Promise.all([
+                page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 30000 }),
+                page.click('.woocommerce-form-login__submit')
+            ]);
+            
+            // Verify login success
+            const errorMessage = await page.$('.woocommerce-error');
+            if (errorMessage) {
+                const error = await page.evaluate(el => el.textContent, errorMessage);
+                console.log('Login failed:', error.trim());
+                if (attempt < 3) await page.waitForTimeout(3000); // Wait before retry
+                continue;
+            }
+            
+            const loggedInElement = await page.$('.woocommerce-MyAccount-navigation');
+            if (loggedInElement) {
+                console.log('Login successful!');
+                return true;
+            }
+            
+            console.log('Login status unclear - no error but not on account page');
+            if (attempt < 3) await page.waitForTimeout(3000);
+            
+        } catch (error) {
+            console.error(`Error during login attempt ${attempt}:`, error.message);
+            if (attempt < 3) {
+                console.log('Waiting before retry...');
+                await page.waitForTimeout(3000);
+            }
+        }
+    }
+    
+    console.log('All login attempts failed');
+    return false;
 }
 
 /**
@@ -147,238 +198,209 @@ const scheduledTask = async (date = new Date()) => {
     console.log(`Searching for updates from ${daysDiff} days ago`);
 
     try {
-        console.log('Launching Puppeteer browser...');
+        // Launch browser with specific options
+        console.log('Launching browser...');
         const browser = await puppeteer.launch({
-            headless: true
+            headless: true,
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--disable-gpu'
+            ]
         });
-        if (!fs.existsSync('./public/downloads/')) {
-            fs.mkdirSync('./public/downloads/', {recursive: true});
-            touch('index.html');
-        }
+
+        // Create new page with longer timeout
         const page = await browser.newPage();
-        page.setDefaultTimeout(0);
+        page.setDefaultTimeout(30000);
+        
+        // Set a reasonable viewport
+        await page.setViewport({ width: 1280, height: 800 });
 
-        try {
-            console.log('Going to the login page...');
-            await page.goto('https://www.realgpl.com/my-account/');
+        // Attempt login
+        const loginSuccess = await handleLogin(page);
+        if (!loginSuccess) {
+            throw new Error('Failed to login after multiple attempts');
+        }
 
-            try {
-                await Promise.all([
-                    page.click('.fc-button-label'),
-                ]);
-            } catch (error) {
-                console.log('No Consent block')
-            }
+        // Changelog scraping with pagination
+        console.log('Starting changelog scraping...');
+        let allData = [];
+        let currentPage = 1;
+        let maxPages = daysDiff > 3 ? 2 : 1; // Check up to 2 pages if date is more than 3 days ago
+        let foundEntries = false;
 
-            // Login attempts
-            let loginSuccess = false;
-            for (let attempt = 1; attempt <= 3; attempt++) {
-                console.log(`Login attempt ${attempt} of 3`);
-                
-                if (attempt > 1) {
-                    await page.evaluate(() => {
-                        document.querySelector('#username').value = '';
-                        document.querySelector('#password').value = '';
-                        document.querySelector('.aiowps-captcha-answer').value = '';
-                    });
-                    await page.reload();
-                }
+        const theDate = new Date(date).toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+        });
+        console.log(`Looking for entries from: ${theDate}`);
 
-                loginSuccess = await attemptLogin(page);
-                if (loginSuccess) break;
-                
-                if (!loginSuccess && attempt < 3) {
-                    console.log('Waiting before next attempt...');
-                    await new Promise(resolve => setTimeout(resolve, 2000));
-                }
-            }
-
-            if (!loginSuccess) {
-                throw new Error('Failed to login after 3 attempts');
-            }
-
-            // Changelog scraping with pagination
-            console.log('Starting changelog scraping...');
-            let allData = [];
-            let currentPage = 1;
-            let maxPages = daysDiff > 3 ? 2 : 1; // Check up to 2 pages if date is more than 3 days ago
-            let foundEntries = false;
-
-            const theDate = new Date(date).toLocaleDateString('en-US', {
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric',
-            });
-            console.log(`Looking for entries from: ${theDate}`);
-
-            while (currentPage <= maxPages) {
-                console.log(`Processing page ${currentPage} of ${maxPages}`);
-                const pageData = await scrapeChangelogPage(page, theDate, currentPage);
-                
-                if (pageData.length > 0) {
-                    console.log(`Found ${pageData.length} entries on page ${currentPage}`);
-                    allData = allData.concat(pageData);
-                    foundEntries = true;
-                } else if (foundEntries) {
-                    console.log('No more entries found on subsequent page, stopping pagination');
-                    break;
-                } else if (currentPage === maxPages) {
-                    console.log(`No entries found after checking ${maxPages} pages`);
-                    break;
-                }
-                
-                currentPage++;
-                if (currentPage <= maxPages) {
-                    console.log('Waiting 2 seconds before next page...');
-                    await new Promise(resolve => setTimeout(resolve, 2000));
-                }
-            }
-
-            console.log(`Total entries found: ${allData.length}`);
+        while (currentPage <= maxPages) {
+            console.log(`Processing page ${currentPage} of ${maxPages}`);
+            const pageData = await scrapeChangelogPage(page, theDate, currentPage);
             
-            // Process the found entries
-            for (let i = 0; i < allData.length; i++) {
-                let text = allData[i].productName;
-
-                // Extract version
-                if (/\d/.test(text)) {
-                    let url = '';
-                    let versionWithoutV = '';
-                    let textWithoutVersion = '';
-                    let slug = '';
-                    let productId = '';
-                    try {
-                        let version = text.match(/v\d+(\.\d+){0,3}/)[0];
-
-                        // Remove 'v' from version
-                        versionWithoutV = version.replace('v', '');
-                        // Remove version from title
-                        textWithoutVersion = text.replace(/ v\d+(\.\d+){0,3}/, '');
-
-                    } catch (e) {
-                        console.log(e);
-                    }
-                    url = allData[i].productURL;
-                    try {
-
-                        let parsedUrl = new URL(url);
-                        url = url.replace(/^\/|\/$/g, '');
-
-                        // Get the last part of the URL after the last slash
-                        let parts = url.split('/');
-                        slug = parts[parts.length - 1];// Extract the slug from the URL
-                        productId = parsedUrl.searchParams.get("product_id");
-                    } catch (e) {
-                        console.log(e);
-                    }// Get the product_id parameter value
-                    allData[i].version = versionWithoutV;
-                    allData[i].name = textWithoutVersion;
-                    allData[i].slug = slug;
-                    allData[i].filename = '';
-                    allData[i].filePath = '';
-                    allData[i].productId = productId;
-
-                }
+            if (pageData.length > 0) {
+                console.log(`Found ${pageData.length} entries on page ${currentPage}`);
+                allData = allData.concat(pageData);
+                foundEntries = true;
+            } else if (foundEntries) {
+                console.log('No more entries found on subsequent page, stopping pagination');
+                break;
+            } else if (currentPage === maxPages) {
+                console.log(`No entries found after checking ${maxPages} pages`);
+                break;
             }
-            console.log('Data processing completed.');
+            
+            currentPage++;
+            if (currentPage <= maxPages) {
+                console.log('Waiting 2 seconds before next page...');
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+        }
 
-            // Process each title and download the files
-            let fileCounter = 0;
-            let errorCounter = 0;
-            for (let i = 0; i < allData.length; i++) {
-                console.log(`Starting download for file ${i + 1} of ${allData.length}...`);
+        console.log(`Total entries found: ${allData.length}`);
+        
+        // Process the found entries
+        for (let i = 0; i < allData.length; i++) {
+            let text = allData[i].productName;
+
+            // Extract version
+            if (/\d/.test(text)) {
+                let url = '';
+                let versionWithoutV = '';
+                let textWithoutVersion = '';
+                let slug = '';
+                let productId = '';
                 try {
-                    // Get cookies from Puppeteer
-                    const cookies = await page.cookies();
+                    let version = text.match(/v\d+(\.\d+){0,3}/)[0];
 
-                    // Format cookies for axios
-                    const formattedCookies = cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
+                    // Remove 'v' from version
+                    versionWithoutV = version.replace('v', '');
+                    // Remove version from title
+                    textWithoutVersion = text.replace(/ v\d+(\.\d+){0,3}/, '');
 
-                    // Use axios to download the file
-                    const response = await axios({
-                        url: allData[i].downloadLink,
-                        method: 'GET',
-                        responseType: 'stream',
-                        headers: {
-                            Cookie: formattedCookies
-                        }
-                    });
-                    // Extract the filename from the URL
-                    var modifiedString = allData[i].slug.replace(/-download$/, "");
-                    modifiedString = allData[i].slug.replace(/download-/, "");
-                    var filename = `${modifiedString}.zip`;
-
-                    // Set the file path
-                    const filePath = path.join('./public/downloads/', filename);
-                    touch(filePath);
-                    // Download the file and save it to the specified path
-                    await pipeline(response.data, fs.createWriteStream(filePath));
-
-                    // Update the titles array with the filename and file path
-                    allData[i].filename = filename;
-                    allData[i].filePath = filePath;
-
-                    allData[i].fileUrl = path.join(process.env.DOWNLOAD_URL, filename);
-                    console.log('Download Successful: ', allData[i].productName)
-                    fileCounter++;
-                    list.push(allData[i]);
                 } catch (e) {
-                    errorCounter++;
-                    console.error(`Failed to download from link: ${allData[i].downloadLink}`);
-                    console.error(e);
-                    error.push(allData[i]);
-
+                    console.log(e);
                 }
+                url = allData[i].productURL;
+                try {
+
+                    let parsedUrl = new URL(url);
+                    url = url.replace(/^\/|\/$/g, '');
+
+                    // Get the last part of the URL after the last slash
+                    let parts = url.split('/');
+                    slug = parts[parts.length - 1];// Extract the slug from the URL
+                    productId = parsedUrl.searchParams.get("product_id");
+                } catch (e) {
+                    console.log(e);
+                }// Get the product_id parameter value
+                allData[i].version = versionWithoutV;
+                allData[i].name = textWithoutVersion;
+                allData[i].slug = slug;
+                allData[i].filename = '';
+                allData[i].filePath = '';
+                allData[i].productId = productId;
 
             }
+        }
+        console.log('Data processing completed.');
 
-            console.log('Downloaded files:', fileCounter);
-            console.log('Errors:', errorCounter);
-            // Close the Puppeteer browser
-            await browser.close();
+        // Process each title and download the files
+        let fileCounter = 0;
+        let errorCounter = 0;
+        for (let i = 0; i < allData.length; i++) {
+            console.log(`Starting download for file ${i + 1} of ${allData.length}...`);
+            try {
+                // Get cookies from Puppeteer
+                const cookies = await page.cookies();
 
-            console.log('Browser closed.');
-            try{
-                touch('error.csv');
-                convertJsonToCsv(error, './public/error.csv', (err) => {
-                    if (err) {
-                        console.error('Error:', err);
-                    } else {
-                        console.log('CSV file has been saved.');
+                // Format cookies for axios
+                const formattedCookies = cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
+
+                // Use axios to download the file
+                const response = await axios({
+                    url: allData[i].downloadLink,
+                    method: 'GET',
+                    responseType: 'stream',
+                    headers: {
+                        Cookie: formattedCookies
                     }
                 });
+                // Extract the filename from the URL
+                var modifiedString = allData[i].slug.replace(/-download$/, "");
+                modifiedString = allData[i].slug.replace(/download-/, "");
+                var filename = `${modifiedString}.zip`;
+
+                // Set the file path
+                const filePath = path.join('./public/downloads/', filename);
+                touch(filePath);
+                // Download the file and save it to the specified path
+                await pipeline(response.data, fs.createWriteStream(filePath));
+
+                // Update the titles array with the filename and file path
+                allData[i].filename = filename;
+                allData[i].filePath = filePath;
+
+                allData[i].fileUrl = path.join(process.env.DOWNLOAD_URL, filename);
+                console.log('Download Successful: ', allData[i].productName)
+                fileCounter++;
+                list.push(allData[i]);
+            } catch (e) {
+                errorCounter++;
+                console.error(`Failed to download from link: ${allData[i].downloadLink}`);
+                console.error(e);
+                error.push(allData[i]);
 
             }
-            catch (err) {
-                console.error('An error occurred:');
-                console.error(err);
-                return err;
-            }
-            try{
-                db.JSON(list);
-                db.sync();
-                touch('data.csv');
-                convertJsonToCsv(list, './public/data.csv', (err) => {
-                    if (err) {
-                        console.error('Error:', err);
-                    } else {
-                        console.log('CSV file has been saved.');
-                    }
-                });
 
-            }
-            catch (err) {
-                console.error('An error occurred:');
-                console.error(err);
-                return err;
-            }
-            return list.length
+        }
 
-        } catch (err) {
+        console.log('Downloaded files:', fileCounter);
+        console.log('Errors:', errorCounter);
+        // Close the Puppeteer browser
+        await browser.close();
+
+        console.log('Browser closed.');
+        try{
+            touch('error.csv');
+            convertJsonToCsv(error, './public/error.csv', (err) => {
+                if (err) {
+                    console.error('Error:', err);
+                } else {
+                    console.log('CSV file has been saved.');
+                }
+            });
+
+        }
+        catch (err) {
             console.error('An error occurred:');
             console.error(err);
             return err;
         }
+        try{
+            db.JSON(list);
+            db.sync();
+            touch('data.csv');
+            convertJsonToCsv(list, './public/data.csv', (err) => {
+                if (err) {
+                    console.error('Error:', err);
+                } else {
+                    console.log('CSV file has been saved.');
+                }
+            });
+
+        }
+        catch (err) {
+            console.error('An error occurred:');
+            console.error(err);
+            return err;
+        }
+        return list.length
+
     } catch (err) {
         console.error('An error occurred:');
         console.error(err);
