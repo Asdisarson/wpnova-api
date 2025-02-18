@@ -81,9 +81,70 @@ const scheduledTask = async (date = new Date()) => {
             console.log('Typing password...');
             await page.type('#password',password.toString());
 
-            await new Promise(resolve => {
-                //add the captcha resolver here
+            // Add captcha solving logic
+            await new Promise(async (resolve) => {
+                try {
+                    // Get the captcha equation text
+                    const captchaText = await page.$eval('.aiowps-captcha-equation strong', el => el.textContent);
+                    
+                    // Extract the equation parts (e.g., "fourteen − ten = ")
+                    const equation = captchaText.split('=')[0].trim();
+                    
+                    // Convert word numbers to digits
+                    const wordToNumber = {
+                        'zero': 0, 'one': 1, 'two': 2, 'three': 3, 'four': 4,
+                        'five': 5, 'six': 6, 'seven': 7, 'eight': 8, 'nine': 9,
+                        'ten': 10, 'eleven': 11, 'twelve': 12, 'thirteen': 13,
+                        'fourteen': 14, 'fifteen': 15, 'sixteen': 16, 'seventeen': 17,
+                        'eighteen': 18, 'nineteen': 19, 'twenty': 20
+                    };
+
+                    // Operation mapping
+                    const operations = {
+                        '−': (a, b) => a - b,
+                        '-': (a, b) => a - b,
+                        '+': (a, b) => a + b,
+                        'plus': (a, b) => a + b,
+                        'minus': (a, b) => a - b,
+                        'times': (a, b) => a * b,
+                        '×': (a, b) => a * b,
+                        '*': (a, b) => a * b,
+                        'divided by': (a, b) => a / b,
+                        '÷': (a, b) => a / b,
+                        '/': (a, b) => a / b
+                    };
+
+                    // Find which operation is being used
+                    let operation;
+                    let parts;
+                    for (const op of Object.keys(operations)) {
+                        if (equation.includes(op)) {
+                            operation = op;
+                            parts = equation.split(op).map(part => {
+                                const word = part.trim().toLowerCase();
+                                return wordToNumber[word] !== undefined ? wordToNumber[word] : parseInt(word);
+                            });
+                            break;
+                        }
+                    }
+
+                    if (!operation || !parts) {
+                        throw new Error('Could not parse equation: ' + equation);
+                    }
+
+                    // Calculate the result
+                    const result = operations[operation](parts[0], parts[1]);
+                    
+                    // Input the answer
+                    await page.type('.aiowps-captcha-answer', Math.round(result).toString());
+                    
+                    resolve();
+                } catch (error) {
+                    console.error('Error solving captcha:', error);
+                    resolve(); // Continue even if captcha solving fails
+                }
             });
+
             console.log('Clicking the login button...');
                await Promise.all([
                    page.waitForNavigation(),
