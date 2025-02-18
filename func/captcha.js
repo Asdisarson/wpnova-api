@@ -4,10 +4,12 @@ const crypto = require('crypto');
 const wordToNumber = {
     'zero': 0, 'one': 1, 'two': 2, 'three': 3, 'four': 4,
     'five': 5, 'six': 6, 'seven': 7, 'eight': 8, 'nine': 9,
-    'ten': 10
+    'ten': 10, 'eleven': 11, 'twelve': 12, 'thirteen': 13,
+    'fourteen': 14, 'fifteen': 15, 'sixteen': 16, 'seventeen': 17,
+    'eighteen': 18, 'nineteen': 19, 'twenty': 20
 };
 
-// Map of numbers to their word representations
+// Map of numbers to their word representations (only needed up to 10 for generation)
 const numberToWord = {
     0: 'zero', 1: 'one', 2: 'two', 3: 'three', 4: 'four',
     5: 'five', 6: 'six', 7: 'seven', 8: 'eight', 9: 'nine',
@@ -18,14 +20,10 @@ const numberToWord = {
 const operators = {
     '+': (a, b) => a + b,
     '-': (a, b) => a - b,
+    '−': (a, b) => a - b,  // Unicode minus sign (U+2212)
     '×': (a, b) => a * b,
-    '÷': (a, b) => a / b,
-    // Add text versions of operators
-    'plus': (a, b) => a + b,
-    'minus': (a, b) => a - b,
-    'times': (a, b) => a * b,
-    'divided by': (a, b) => a / b
-};      
+    '*': (a, b) => a * b
+};
 
 /**
  * Generates a random number between min and max (inclusive)
@@ -121,20 +119,52 @@ function generateCaptchaHTML(format = 'numbers', firstOperandWord = false) {
  * @returns {number} The numeric value
  */
 function parseNumberOrWord(value) {
-    // Remove any whitespace and convert to lowercase
-    value = value.trim().toLowerCase();
-    
-    // If it's a numeric string, parse it
-    if (/^\d+$/.test(value)) {
-        return parseInt(value, 10);
+    try {
+        // Remove any whitespace and convert to lowercase
+        value = value.trim().toLowerCase();
+        
+        // If it's a numeric string, parse it
+        if (/^\d+$/.test(value)) {
+            return parseInt(value, 10);
+        }
+        
+        // If it's a word, convert it
+        if (wordToNumber.hasOwnProperty(value)) {
+            return wordToNumber[value];
+        }
+        
+        console.error(`Unable to parse value: ${value}`);
+        console.log('Available word numbers:', Object.keys(wordToNumber).join(', '));
+        throw new Error(`Unable to parse value: ${value}`);
+    } catch (error) {
+        console.error('Error in parseNumberOrWord:', error);
+        throw error;
     }
-    
-    // If it's a word, convert it
-    if (wordToNumber.hasOwnProperty(value)) {
-        return wordToNumber[value];
+}
+
+/**
+ * Normalizes operators to handle different minus sign representations
+ * @param {string} equation - The equation to normalize
+ * @returns {string} - Normalized equation
+ */
+function normalizeOperators(equation) {
+    // Replace hyphen-minus with Unicode minus
+    return equation.replace(/-/g, '−');
+}
+
+/**
+ * Extracts operator from equation
+ * @param {string} equation - The equation to parse
+ * @returns {string} - The operator found
+ */
+function extractOperator(equation) {
+    const normalizedEq = normalizeOperators(equation);
+    for (const op of Object.keys(operators)) {
+        if (normalizedEq.includes(op)) {
+            return op;
+        }
     }
-    
-    throw new Error(`Unable to parse value: ${value}`);
+    throw new Error(`No supported operator found in equation: ${equation}`);
 }
 
 /**
@@ -143,61 +173,115 @@ function parseNumberOrWord(value) {
  * @returns {number} The solution to the equation
  */
 function solveCaptcha(equation) {
-    // Clean up the equation
-    equation = equation.toLowerCase().trim();
-    
-    // Split the equation into parts
-    let parts;
-    
-    // Handle different operator formats
-    if (equation.includes('−')) {
-        parts = equation.split('−').map(p => p.trim());
-        return parseNumberOrWord(parts[0]) - parseNumberOrWord(parts[1]);
-    } else if (equation.includes('-')) {
-        parts = equation.split('-').map(p => p.trim());
-        return parseNumberOrWord(parts[0]) - parseNumberOrWord(parts[1]);
-    } else if (equation.includes('+')) {
-        parts = equation.split('+').map(p => p.trim());
-        return parseNumberOrWord(parts[0]) + parseNumberOrWord(parts[1]);
-    } else if (equation.includes('×')) {
-        parts = equation.split('×').map(p => p.trim());
-        return parseNumberOrWord(parts[0]) * parseNumberOrWord(parts[1]);
-    } else if (equation.includes('*')) {
-        parts = equation.split('*').map(p => p.trim());
-        return parseNumberOrWord(parts[0]) * parseNumberOrWord(parts[1]);
+    try {
+        // Clean up and normalize the equation
+        equation = normalizeOperators(equation.trim());
+        console.log('Processing normalized equation:', equation);
+        
+        const operator = extractOperator(equation);
+        console.log('Found operator:', operator);
+        
+        // Split the equation using the exact operator
+        const parts = equation.split(operator).map(p => p.trim());
+        console.log('Equation parts:', parts);
+        
+        const num1 = parseNumberOrWord(parts[0]);
+        const num2 = parseNumberOrWord(parts[1]);
+        
+        console.log('Parsed numbers:', num1, operator, num2);
+        
+        const result = operators[operator](num1, num2);
+        console.log('Calculated result:', result);
+        return result;
+    } catch (error) {
+        console.error('Error in solveCaptcha:', error);
+        throw error;
     }
-    
-    throw new Error(`Unsupported equation format: ${equation}`);
 }
 
 /**
- * Extracts and solves the captcha from a login page HTML
+ * Triple checks a captcha solution to ensure accuracy
+ * @param {string} equation - The equation to solve
+ * @returns {number} The verified solution
+ */
+function tripleCheckSolution(equation) {
+    console.log('Triple checking equation:', equation);
+    
+    // First check - normal solve
+    const solution1 = solveCaptcha(equation);
+    console.log('First check result:', solution1);
+    
+    // Second check - solve with normalized operators
+    const solution2 = solveCaptcha(normalizeOperators(equation));
+    console.log('Second check result:', solution2);
+    
+    // Third check - solve parts individually and combine
+    const operator = extractOperator(equation);
+    const parts = equation.split(operator).map(p => p.trim());
+    const num1 = parseNumberOrWord(parts[0]);
+    const num2 = parseNumberOrWord(parts[1]);
+    const solution3 = operators[operator](num1, num2);
+    console.log('Third check result:', solution3);
+    
+    // Verify all solutions match
+    if (solution1 !== solution2 || solution2 !== solution3) {
+        console.error('Solution mismatch detected!');
+        console.error(`Solution 1: ${solution1}`);
+        console.error(`Solution 2: ${solution2}`);
+        console.error(`Solution 3: ${solution3}`);
+        throw new Error('Inconsistent captcha solutions');
+    }
+    
+    console.log('All checks passed. Verified solution:', solution1);
+    return solution1;
+}
+
+/**
+ * Extracts and solves the captcha from a login page HTML with triple verification
  * @param {string} html - The HTML containing the captcha
  * @returns {Object} The captcha solution and verification info
  */
 function extractAndSolveCaptcha(html) {
-    // Extract the equation
-    const equationMatch = html.match(/class="aiowps-captcha-equation[^>]*><strong>([^=]+)=/);
-    if (!equationMatch) {
-        throw new Error('Could not find captcha equation');
+    try {
+        // Extract the equation
+        const equationMatch = html.match(/class="aiowps-captcha-equation[^>]*><strong>([^=]+)=/);
+        if (!equationMatch) {
+            throw new Error('Could not find captcha equation');
+        }
+        
+        const equation = equationMatch[1].trim();
+        console.log('Extracted equation:', equation);
+        
+        // Extract the verification strings
+        const stringInfoMatch = html.match(/name="aiowps-captcha-string-info"[^>]*value="([^"]+)"/);
+        const tempStringMatch = html.match(/name="aiowps-captcha-temp-string"[^>]*value="([^"]+)"/);
+        
+        if (!stringInfoMatch || !tempStringMatch) {
+            throw new Error('Could not find captcha verification strings');
+        }
+        
+        // Triple check the solution
+        const answer = tripleCheckSolution(equation);
+        
+        // Verify against the temp string if available
+        if (tempStringMatch[1]) {
+            const expectedAnswer = parseInt(tempStringMatch[1], 10);
+            if (!isNaN(expectedAnswer) && expectedAnswer !== answer) {
+                console.error('Warning: Calculated answer differs from expected answer');
+                console.error(`Calculated: ${answer}, Expected: ${expectedAnswer}`);
+            }
+        }
+        
+        return {
+            answer,
+            stringInfo: stringInfoMatch[1],
+            tempString: tempStringMatch[1],
+            equation: equation
+        };
+    } catch (error) {
+        console.error('Error in extractAndSolveCaptcha:', error);
+        throw error;
     }
-    
-    const equation = equationMatch[1].trim();
-    
-    // Extract the verification strings
-    const stringInfoMatch = html.match(/name="aiowps-captcha-string-info"[^>]*value="([^"]+)"/);
-    const tempStringMatch = html.match(/name="aiowps-captcha-temp-string"[^>]*value="([^"]+)"/);
-    
-    if (!stringInfoMatch || !tempStringMatch) {
-        throw new Error('Could not find captcha verification strings');
-    }
-    
-    return {
-        answer: solveCaptcha(equation),
-        stringInfo: stringInfoMatch[1],
-        tempString: tempStringMatch[1],
-        equation: equation
-    };
 }
 
 module.exports = {
@@ -206,6 +290,7 @@ module.exports = {
     generateCaptchaHTML,
     solveCaptcha,
     extractAndSolveCaptcha,
+    tripleCheckSolution,
     wordToNumber,
     numberToWord
 }; 
