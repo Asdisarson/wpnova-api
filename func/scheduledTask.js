@@ -7,303 +7,28 @@ const stream = require('stream');
 const {promisify} = require('util');
 const pipeline = promisify(stream.pipeline);
 const convertJsonToCsv = require('./convertJsonToCsv');
-const { extractAndSolveCaptcha } = require('./captcha');
-const { performance } = require('perf_hooks');
-
-// Utility functions
 const ensureDirectoryExistence = (filePath) => {
     const dirname = path.dirname(filePath);
-    if (fs.existsSync(dirname)) return true;
+    if (fs.existsSync(dirname)) {
+        return true;
+    }
     ensureDirectoryExistence(dirname);
     fs.mkdirSync(dirname);
-};
+}
 
 function touch(filename) {
     try {
+        // Check if file exists
         if (!fs.existsSync(filename)) {
+            // If not, create an empty file
             fs.writeFileSync(filename, '');
         } else {
+            // If it does, update its modification time
             const currentTime = new Date();
             fs.utimesSync(filename, currentTime, currentTime);
         }
     } catch (err) {
         console.error(`Error touching file ${filename}:`, err);
-    }
-}
-
-const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
-// Add utility functions
-const logWithTimestamp = (message) => {
-    const timestamp = new Date().toISOString();
-    console.log(`[${timestamp}] ${message}`);
-};
-
-const measureTime = (startTime, label) => {
-    const duration = performance.now() - startTime;
-    logWithTimestamp(`${label} took ${duration.toFixed(2)}ms`);
-    return duration;
-};
-
-/**
- * Enhanced error recovery function
- * @param {Function} operation - Async operation to perform
- * @param {number} maxRetries - Maximum number of retries
- * @param {number} baseDelay - Base delay between retries in ms
- * @param {string} operationName - Name of the operation for logging
- */
-async function withRetry(operation, maxRetries = 3, baseDelay = 3000, operationName = 'Operation') {
-    let lastError;
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        try {
-            const startTime = performance.now();
-            const result = await operation();
-            measureTime(startTime, `${operationName} - Attempt ${attempt}`);
-            return result;
-        } catch (error) {
-            lastError = error;
-            if (attempt === maxRetries) {
-                logWithTimestamp(`${operationName} failed after ${maxRetries} attempts: ${error.message}`);
-                throw error;
-            }
-            const delay = baseDelay * Math.pow(2, attempt - 1); // Exponential backoff
-            logWithTimestamp(`${operationName} attempt ${attempt} failed, retrying in ${delay}ms`);
-            await new Promise(resolve => setTimeout(resolve, delay));
-        }
-    }
-}
-
-/**
- * Handles the login process with retries
- * @param {import('puppeteer').Page} page - Puppeteer page object
- * @returns {Promise<boolean>} - True if login successful
- */
-async function handleLogin(page) {
-    console.log('Starting login process...');
-    
-    try {
-        // Go to the login page with full load waiting
-        console.log('Navigating to login page...');
-        await page.goto('https://www.realgpl.com/my-account/', {
-            waitUntil: ['networkidle0', 'domcontentloaded', 'load'],
-            timeout: 120000
-        });
-
-        // Wait for critical elements to be truly ready
-        console.log('Waiting for page to be fully interactive...');
-        await Promise.all([
-            page.waitForSelector('#username', { visible: true, timeout: 60000 }),
-            page.waitForSelector('#password', { visible: true, timeout: 60000 }),
-            page.waitForSelector('.aiowps-captcha-equation', { visible: true, timeout: 60000 }),
-            page.waitForSelector('.woocommerce-form-login__submit', { visible: true, timeout: 60000 })
-        ]);
-
-        // Additional wait to ensure JavaScript is fully loaded
-        await page.waitForFunction(() => {
-            return document.readyState === 'complete' && 
-                   !document.querySelector('.loading') &&
-                   window.jQuery !== undefined;
-        }, { timeout: 60000 });
-
-        console.log('Page is fully loaded and interactive');
-        
-        // Handle consent if present
-        try {
-            const consentButton = await page.$('.fc-button-label');
-            if (consentButton) {
-                console.log('Handling consent popup...');
-                await consentButton.click();
-                await delay(2500);
-                await page.waitForFunction(() => {
-                    const overlay = document.querySelector('.fc-consent-overlay');
-                    return !overlay || overlay.style.display === 'none';
-                }, { timeout: 10000 });
-            }
-        } catch (error) {
-            console.log('No consent popup found or already handled');
-        }
-        
-        // Try login up to 3 times
-        for (let attempt = 1; attempt <= 3; attempt++) {
-            console.log(`\nLogin attempt ${attempt} of 3`);
-            
-            try {
-                if (attempt > 1) {
-                    console.log('Clearing previous input and reloading...');
-                    await page.evaluate(() => {
-                        document.querySelector('#username').value = '';
-                        document.querySelector('#password').value = '';
-                        const captchaInput = document.querySelector('.aiowps-captcha-answer');
-                        if (captchaInput) captchaInput.value = '';
-                    });
-                    
-                    await page.reload({ 
-                        waitUntil: ['networkidle0', 'domcontentloaded', 'load'],
-                        timeout: 60000 
-                    });
-                    
-                    await Promise.all([
-                        page.waitForSelector('#username', { visible: true, timeout: 60000 }),
-                        page.waitForSelector('#password', { visible: true, timeout: 60000 }),
-                        page.waitForSelector('.aiowps-captcha-equation', { visible: true, timeout: 60000 })
-                    ]);
-                    
-                    await delay(3000);
-                }
-                
-                // Get and solve captcha
-                const captchaText = await page.$eval('.aiowps-captcha-equation strong', el => el.textContent);
-                console.log('Current captcha:', captchaText.trim());
-                
-                // Fill in credentials
-                console.log('Entering credentials...');
-                await page.type('#username', process.env.USERNAME);
-                await page.type('#password', process.env.PASSWORD);
-                
-                // Handle captcha
-                console.log('Solving captcha...');
-                const html = await page.content();
-                const captchaSolution = extractAndSolveCaptcha(html);
-                console.log('Captcha equation:', captchaSolution.equation);
-                console.log('Captcha answer:', captchaSolution.answer);
-                
-                await page.type('.aiowps-captcha-answer', captchaSolution.answer.toString());
-                
-                // Submit form and wait for navigation
-                console.log('Submitting login form...');
-                await Promise.all([
-                    page.waitForNavigation({ 
-                        waitUntil: ['networkidle0', 'domcontentloaded', 'load'],
-                        timeout: 60000 
-                    }),
-                    page.click('.woocommerce-form-login__submit')
-                ]);
-                
-                await delay(4000);
-                
-                // Verify login success
-                const errorMessage = await page.$('.woocommerce-error');
-                if (errorMessage) {
-                    const error = await page.$eval('.woocommerce-error', el => el.textContent);
-                    console.log('Login failed:', error.trim());
-                    if (attempt < 3) await delay(5000);
-                    continue;
-                }
-                
-                const loggedInElement = await page.$('.woocommerce-MyAccount-navigation');
-                if (loggedInElement) {
-                    console.log('Login successful!');
-                    return true;
-                }
-                
-                console.log('Login status unclear - no error but not on account page');
-                if (attempt < 3) await delay(5000);
-                
-            } catch (error) {
-                console.error(`Error during login attempt ${attempt}:`, error.message);
-                if (attempt < 3) {
-                    console.log('Waiting before retry...');
-                    await delay(3000);
-                }
-            }
-        }
-        
-        console.log('All login attempts failed');
-        return false;
-        
-    } catch (error) {
-        console.error('Fatal error during login process:', error);
-        throw error;
-    }
-}
-
-/**
- * Scrapes changelog data from a specific page
- * @param {import('puppeteer').Page} page - Puppeteer page object
- * @param {string} theDate - Target date string
- * @param {number} pageNum - Page number to scrape
- * @returns {Promise<Array>} - Array of changelog entries
- */
-async function scrapeChangelogPage(page, theDate, pageNum) {
-    const startTime = performance.now();
-    logWithTimestamp(`Scraping changelog page ${pageNum}...`);
-    
-    const url = `https://www.realgpl.com/changelog/?99936_results_per_page=50&99936_paged=${pageNum}`;
-    const baseTimeout = 60000;
-    const progressiveTimeout = baseTimeout * (1 + (pageNum > 1 ? Math.min(pageNum * 0.2, 1) : 0));
-    
-    try {
-        // Performance optimization: Enable request interception to block unnecessary resources
-        await page.setRequestInterception(true);
-        page.on('request', request => {
-            const resourceType = request.resourceType();
-            if (['image', 'stylesheet', 'font'].includes(resourceType)) {
-                request.abort();
-            } else {
-                request.continue();
-            }
-        });
-
-        logWithTimestamp(`Navigating to page ${pageNum} with ${progressiveTimeout}ms timeout`);
-        await page.goto(url, {
-            waitUntil: ['networkidle0', 'domcontentloaded', 'load'],
-            timeout: progressiveTimeout
-        });
-        measureTime(startTime, 'Navigation');
-
-        const loadStartTime = performance.now();
-        await page.waitForFunction(() => {
-            return document.readyState === 'complete' && 
-                   !document.querySelector('.loading');
-        }, { timeout: progressiveTimeout });
-        measureTime(loadStartTime, 'Page load');
-
-        // Performance optimization: Use CDP to get page content
-        const cdpStartTime = performance.now();
-        const data = await withRetry(async () => {
-            const result = await page.evaluate((theDate) => {
-                const rows = document.querySelectorAll('tr.awcpt-row');
-                const rowDataArray = [];
-                performance.mark('scraping-start');
-                
-                for (const row of rows) {
-                    const date = row.querySelector('.awcpt-date')?.innerText;
-                    if (date === theDate) {
-                        try {
-                            rowDataArray.push({
-                                id: row.getAttribute('data-id'),
-                                productName: row.querySelector('.awcpt-title')?.innerText,
-                                date,
-                                downloadLink: row.querySelector('.awcpt-shortcode-wrap a')?.getAttribute('href'),
-                                productURL: row.querySelector('.awcpt-prdTitle-col a')?.getAttribute('href'),
-                            });
-                        } catch (e) {
-                            console.error('Error processing row:', e);
-                        }
-                    }
-                }
-                
-                performance.mark('scraping-end');
-                performance.measure('scraping', 'scraping-start', 'scraping-end');
-                return rowDataArray;
-            }, theDate);
-            return result;
-        }, 3, 5000, `Page ${pageNum} data extraction`);
-        
-        measureTime(cdpStartTime, 'Data extraction');
-        logWithTimestamp(`Found ${data.length} matching entries on page ${pageNum}`);
-        
-        // Disable request interception after we're done
-        await page.setRequestInterception(false);
-        return data;
-        
-    } catch (error) {
-        logWithTimestamp(`Error scraping changelog page ${pageNum}: ${error.message}`);
-        // Ensure we disable request interception even on error
-        await page.setRequestInterception(false);
-        return [];
-    } finally {
-        measureTime(startTime, `Total page ${pageNum} processing`);
     }
 }
 
@@ -314,195 +39,250 @@ const scheduledTask = async (date = new Date()) => {
     db.JSON({});
     let list = [];
     let error = [];
-
-    const today = new Date();
-    const daysDiff = Math.floor((today - date) / (1000 * 60 * 60 * 24));
-    console.log(`Searching for updates from ${daysDiff} days ago`);
-
     try {
-        console.log('Launching browser...');
+        // Launch Puppeteer browser
+        console.log('Launching Puppeteer browser...');
         const browser = await puppeteer.launch({
-            headless: "new",  // Using new headless mode
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-accelerated-2d-canvas',
-                '--disable-gpu',
-                '--window-size=1280,800'
-            ],
-            defaultViewport: {
-                width: 1280,
-                height: 800
-            }
+            headless: true
         });
-
+        if (!fs.existsSync('./public/downloads/')) {
+            fs.mkdirSync('./public/downloads/', {recursive: true});
+            touch('index.html');
+        }
+        // Create a new page
         const page = await browser.newPage();
-        page.setDefaultNavigationTimeout(120000);
-        
-        const loginSuccess = await handleLogin(page);
-        if (!loginSuccess) {
-            throw new Error('Failed to login after multiple attempts');
-        }
+        page.setDefaultTimeout(0);
 
-        console.log('Starting changelog scraping...');
-        let allData = [];
-        let currentPage = 1;
-        let maxPages = daysDiff > 3 ? 10 : 5;
-        let foundEntries = false;
-        let consecutiveEmptyPages = 0;
-        const MAX_EMPTY_PAGES = 3;
+        try {
+            // Go to the login page
+            console.log('Going to the login page...');
+            await page.goto('https://www.realgpl.com/my-account/');
 
-        const theDate = new Date(date).toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric',
-        });
-        console.log(`Looking for entries from: ${theDate}`);
 
-        while (currentPage <= maxPages) {
-            console.log(`Processing page ${currentPage} of ${maxPages}`);
-            const pageData = await scrapeChangelogPage(page, theDate, currentPage);
-            
-            if (pageData.length > 0) {
-                console.log(`Found ${pageData.length} entries on page ${currentPage}`);
-                allData = allData.concat(pageData);
-                foundEntries = true;
-                consecutiveEmptyPages = 0;
-            } else {
-                consecutiveEmptyPages++;
-                console.log(`No entries found on page ${currentPage}. Empty pages in a row: ${consecutiveEmptyPages}`);
-                
-                if (foundEntries && consecutiveEmptyPages >= MAX_EMPTY_PAGES) {
-                    console.log(`No entries found in ${MAX_EMPTY_PAGES} consecutive pages, stopping pagination`);
-                    break;
-                }
-            }
-            
-            currentPage++;
-            if (currentPage <= maxPages) {
-                const waitTime = 3000 + (currentPage > 5 ? 2000 : 0);
-                console.log(`Waiting ${waitTime}ms before next page...`);
-                await delay(waitTime);
-            }
-        }
 
-        console.log(`Total entries found: ${allData.length} across ${currentPage - 1} pages`);
-        
-        // Process entries
-        for (const item of allData) {
-            if (/\d/.test(item.productName)) {
-                try {
-                    const version = item.productName.match(/v\d+(\.\d+){0,3}/)?.[0] || '';
-                    const versionWithoutV = version.replace('v', '');
-                    const textWithoutVersion = item.productName.replace(/ v\d+(\.\d+){0,3}/, '');
-                    
-                    const parsedUrl = new URL(item.productURL);
-                    const url = item.productURL.replace(/^\/|\/$/g, '');
-                    const parts = url.split('/');
-                    const slug = parts[parts.length - 1];
-                    const productId = parsedUrl.searchParams.get("product_id");
-
-                    item.version = versionWithoutV;
-                    item.name = textWithoutVersion;
-                    item.slug = slug;
-                    item.filename = '';
-                    item.filePath = '';
-                    item.productId = productId;
-                } catch (e) {
-                    console.error('Error processing item:', e);
-                }
-            }
-        }
-        console.log('Data processing completed.');
-
-        // Download files
-        let fileCounter = 0;
-        let errorCounter = 0;
-        for (const item of allData) {
-            const downloadStartTime = performance.now();
-            logWithTimestamp(`Starting download for file ${fileCounter + 1} of ${allData.length}`);
-            
             try {
-                await withRetry(async () => {
+                //consent label
+                await Promise.all([
+                    page.click('.fc-button-label'),
+                ]);
+            } catch (error) {
+                console.log('No Consent block')
+            }
+
+
+
+            var username =  process.env.USERNAME;
+            var password = process.env.PASSWORD;
+            // Fill in the login credentials
+            console.log('Typing username...');
+
+            await page.type('#username',username.toString());
+
+            console.log('Typing password...');
+            await page.type('#password',password.toString());
+            
+            console.log('Clicking the login button...');
+               await Promise.all([
+                   page.waitForNavigation(),
+                   page.click('.button.woocommerce-button.woocommerce-form-login__submit'),
+               ]);
+
+
+            // Go to the changelog page
+            console.log('Going to the changelog page...');
+            await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=250');
+                console.log(date)
+            console.log('Changelog page...');
+
+
+            var theDate = new Date(date).toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+            });
+            console.log(theDate);
+            const data = await page.evaluate((theDate) => {
+                const rows = document.querySelectorAll('tr.awcpt-row');
+                const rowDataArray = [];
+
+                for (const row of rows) {
+                    var date = row.querySelector('.awcpt-date').innerText;
+                    // This determanice date of the update
+                    if (theDate === date) {
+                        try {
+                            const id = row.getAttribute('data-id');
+                            const productName = row.querySelector('.awcpt-title').innerText;
+                            const downloadLink = row.querySelector('.awcpt-shortcode-wrap a').getAttribute('href');
+                            const productURL = row.querySelector('.awcpt-prdTitle-col a').getAttribute('href');
+
+                            // Create an object with the extracted data for each row
+                            const rowData = {
+                                id,
+                                productName,
+                                date,
+                                downloadLink,
+                                productURL, // Add the product URL to the object
+                            };
+
+                            rowDataArray.push(rowData); }
+                        catch (e) {
+                            console.error(e);
+                        }
+                    }
+
+                }
+                return rowDataArray;
+            }, theDate);
+
+            console.log('Changelog entries for ', theDate);
+            console.log(data);
+
+            // Process each title and extract relevant information
+            for (let i = 0; i < data.length; i++) {
+                let text = data[i].productName;
+
+                // Extract version
+                if (/\d/.test(text)) {
+                    let url = '';
+                    let versionWithoutV = '';
+                    let textWithoutVersion = '';
+                    let slug = '';
+                    let productId = '';
+                    try {
+                        let version = text.match(/v\d+(\.\d+){0,3}/)[0];
+
+                        // Remove 'v' from version
+                        versionWithoutV = version.replace('v', '');
+                        // Remove version from title
+                        textWithoutVersion = text.replace(/ v\d+(\.\d+){0,3}/, '');
+
+                    } catch (e) {
+                        console.log(e);
+                    }
+                    url = data[i].productURL;
+                    try {
+
+                        let parsedUrl = new URL(url);
+                        url = url.replace(/^\/|\/$/g, '');
+
+                        // Get the last part of the URL after the last slash
+                        let parts = url.split('/');
+                        slug = parts[parts.length - 1];// Extract the slug from the URL
+                        productId = parsedUrl.searchParams.get("product_id");
+                    } catch (e) {
+                        console.log(e);
+                    }// Get the product_id parameter value
+                    data[i].version = versionWithoutV;
+                    data[i].name = textWithoutVersion;
+                    data[i].slug = slug;
+                    data[i].filename = '';
+                    data[i].filePath = '';
+                    data[i].productId = productId;
+
+                }
+            }
+            console.log('Data processing completed.');
+
+            // Process each title and download the files
+            let fileCounter = 0;
+            let errorCounter = 0;
+            for (let i = 0; i < data.length; i++) {
+                console.log(`Starting download for file ${i + 1} of ${data.length}...`);
+                try {
+                    // Get cookies from Puppeteer
                     const cookies = await page.cookies();
+
+                    // Format cookies for axios
                     const formattedCookies = cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
-                    
+
+                    // Use axios to download the file
                     const response = await axios({
-                        url: item.downloadLink,
+                        url: data[i].downloadLink,
                         method: 'GET',
                         responseType: 'stream',
                         headers: {
-                            Cookie: formattedCookies,
-                            'User-Agent': await page.evaluate(() => navigator.userAgent)
-                        },
-                        timeout: 120000,
-                        maxContentLength: Infinity,
-                        maxBodyLength: Infinity
+                            Cookie: formattedCookies
+                        }
                     });
+                    // Extract the filename from the URL
+                    var modifiedString = data[i].slug.replace(/-download$/, "");
+                    modifiedString = data[i].slug.replace(/download-/, "");
+                    var filename = `${modifiedString}.zip`;
 
-                    const modifiedString = item.slug.replace(/-download$/, "").replace(/download-/, "");
-                    const filename = `${modifiedString}.zip`;
+                    // Set the file path
                     const filePath = path.join('./public/downloads/', filename);
-                    
                     touch(filePath);
+                    // Download the file and save it to the specified path
                     await pipeline(response.data, fs.createWriteStream(filePath));
 
-                    item.filename = filename;
-                    item.filePath = filePath;
-                    item.fileUrl = path.join(process.env.DOWNLOAD_URL, filename);
-                    
+                    // Update the titles array with the filename and file path
+                    data[i].filename = filename;
+                    data[i].filePath = filePath;
+
+                    data[i].fileUrl = path.join(process.env.DOWNLOAD_URL, filename);
+                    console.log('Download Successful: ', data[i].productName)
                     fileCounter++;
-                    list.push(item);
-                    
-                    measureTime(downloadStartTime, `Download of ${filename}`);
-                    return true;
-                }, 3, 5000, `Download of ${item.productName}`);
-            } catch (error) {
-                errorCounter++;
-                logWithTimestamp(`Failed to download ${item.productName}: ${error.message}`);
-                error.push(item);
+                    list.push(data[i]);
+                } catch (e) {
+                    errorCounter++;
+                    console.error(`Failed to download from link: ${data[i].downloadLink}`);
+                    console.error(e);
+                    error.push(data[i]);
+
+                }
+
             }
-        }
 
-        console.log('Downloaded files:', fileCounter);
-        console.log('Errors:', errorCounter);
-        await browser.close();
-        console.log('Browser closed.');
+            console.log('Downloaded files:', fileCounter);
+            console.log('Errors:', errorCounter);
+            // Close the Puppeteer browser
+            await browser.close();
 
-        // Save results
-        try {
-            touch('error.csv');
-            await new Promise((resolve, reject) => {
+            console.log('Browser closed.');
+            try{
+                touch('error.csv');
                 convertJsonToCsv(error, './public/error.csv', (err) => {
-                    if (err) reject(err);
-                    else resolve();
+                    if (err) {
+                        console.error('Error:', err);
+                    } else {
+                        console.log('CSV file has been saved.');
+                    }
                 });
-            });
-            console.log('Error CSV saved');
-        } catch (err) {
-            console.error('Error saving error.csv:', err);
-        }
 
-        try {
-            db.JSON(list);
-            db.sync();
-            touch('data.csv');
-            await new Promise((resolve, reject) => {
+            }
+            catch (err) {
+                console.error('An error occurred:');
+                console.error(err);
+                return err;
+            }
+            try{
+                db.JSON(list);
+                db.sync();
+                touch('data.csv');
                 convertJsonToCsv(list, './public/data.csv', (err) => {
-                    if (err) reject(err);
-                    else resolve();
+                    if (err) {
+                        console.error('Error:', err);
+                    } else {
+                        console.log('CSV file has been saved.');
+                    }
                 });
-            });
-            console.log('Data CSV saved');
+
+            }
+            catch (err) {
+                console.error('An error occurred:');
+                console.error(err);
+                return err;
+            }
+            return list.length
+
         } catch (err) {
-            console.error('Error saving data.csv:', err);
+            console.error('An error occurred:');
+            console.error(err);
+            return err;
         }
-
-        return list.length;
-
     } catch (err) {
-        console.error('An error occurred:', err);
+        console.error('An error occurred:');
+        console.error(err);
         return err;
     }
 }
