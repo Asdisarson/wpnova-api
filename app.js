@@ -13,20 +13,6 @@ app.use(logger('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
-
-// Run scheduled task on startup
-console.log('Running initial scheduled task on startup...');
-scheduledTask(new Date())
-    .then(downloads => {
-        console.log('Initial scheduled task completed successfully');
-        console.log(`Downloaded ${downloads} files`);
-        executeAfterAnHour();
-    })
-    .catch(error => {
-        console.error('Initial scheduled task failed:', error);
-        executeAfterAnHour();
-    });
-
 function executeAfterAnHour()    {
     setTimeout(() => {
         const downloadsDir = path.join(__dirname, 'public', 'downloads');

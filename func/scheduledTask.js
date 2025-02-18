@@ -7,11 +7,6 @@ const stream = require('stream');
 const {promisify} = require('util');
 const pipeline = promisify(stream.pipeline);
 const convertJsonToCsv = require('./convertJsonToCsv');
-
-// Maximum number of login attempts
-const MAX_LOGIN_ATTEMPTS = 3;
-const RETRY_DELAY = 5000; // 5 seconds
-
 const ensureDirectoryExistence = (filePath) => {
     const dirname = path.dirname(filePath);
     if (fs.existsSync(dirname)) {
@@ -37,200 +32,106 @@ function touch(filename) {
     }
 }
 
-async function attemptLogin(page, username, password, attempt = 1) {
-    console.log(`Login attempt ${attempt} of ${MAX_LOGIN_ATTEMPTS}...`);
-    
-    try {
-        // Fill in credentials
-        console.log('Entering username...');
-        await page.type('#username', username.toString());
-        
-        console.log('Entering password...');
-        await page.type('#password', password.toString());
-        
-        // Handle CAPTCHA
-        console.log('Processing CAPTCHA...');
-        await new Promise(async (resolve) => {
-            try {
-                await page.waitForSelector('.aiowps-captcha-equation');
-                console.log('CAPTCHA element found');
-                
-                const captchaText = await page.$eval('.aiowps-captcha-equation strong', el => el.textContent);
-                console.log('CAPTCHA equation found:', captchaText);
-                
-                const equation = captchaText.split('=')[0].trim();
-                
-                const wordToNumber = {
-                    'zero': 0, 'one': 1, 'two': 2, 'three': 3, 'four': 4,
-                    'five': 5, 'six': 6, 'seven': 7, 'eight': 8, 'nine': 9,
-                    'ten': 10, 'eleven': 11, 'twelve': 12, 'thirteen': 13,
-                    'fourteen': 14, 'fifteen': 15, 'sixteen': 16,
-                    'seventeen': 17, 'eighteen': 18, 'nineteen': 19, 'twenty': 20
-                };
-
-                const parts = equation.toLowerCase().split(/\s+/);
-                console.log('Parsed equation parts:', parts);
-                
-                const num1 = wordToNumber[parts[0]] || parseInt(parts[0]);
-                const operator = parts[1];
-                const num2 = wordToNumber[parts[2]] || parseInt(parts[2]);
-                
-                let result;
-                switch(operator) {
-                    case '+':
-                    case 'plus':
-                        result = num1 + num2;
-                        break;
-                    case '-':
-                    case '−':
-                    case 'minus':
-                        result = num1 - num2;
-                        break;
-                    case '×':
-                    case '*':
-                    case 'times':
-                        result = num1 * num2;
-                        break;
-                    default:
-                        throw new Error('Unknown operator: ' + operator);
-                }
-
-                console.log('Solved CAPTCHA:', equation, '=', result);
-                
-                const captchaInput = await page.$('.aiowps-captcha-answer');
-                await captchaInput.type(result.toString());
-                console.log('Entered CAPTCHA solution');
-                
-                resolve();
-            } catch (error) {
-                console.error('CAPTCHA handling error:', error);
-                resolve();
-            }
-        });
-
-        // Click login button and wait for navigation
-        console.log('Submitting login form...');
-        await Promise.all([
-            page.waitForNavigation(),
-            page.click('.button.woocommerce-button.woocommerce-form-login__submit'),
-        ]);
-
-        // Check if login was successful by looking for a success indicator
-        const isLoggedIn = await page.evaluate(() => {
-            return !document.querySelector('.woocommerce-error');
-        });
-
-        if (isLoggedIn) {
-            console.log('Login successful!');
-            return true;
-        } else {
-            console.log('Login failed - error message present');
-            throw new Error('Login failed');
-        }
-    } catch (error) {
-        console.error(`Login attempt ${attempt} failed:`, error.message);
-        
-        if (attempt < MAX_LOGIN_ATTEMPTS) {
-            console.log(`Waiting ${RETRY_DELAY/1000} seconds before next attempt...`);
-            await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
-            return attemptLogin(page, username, password, attempt + 1);
-        } else {
-            throw new Error(`Failed to login after ${MAX_LOGIN_ATTEMPTS} attempts`);
-        }
-    }
-}
-
 const scheduledTask = async (date = new Date()) => {
-    console.log('Starting scheduled task...');
-    console.log('Target date:', date);
-    
     const dbPath = path.join(__dirname, 'files.json');
     ensureDirectoryExistence(dbPath);
     const db = new JSONdb(dbPath);
     db.JSON({});
     let list = [];
     let error = [];
-
     try {
-        console.log('Launching browser...');
+        // Launch Puppeteer browser
+        console.log('Launching Puppeteer browser...');
         const browser = await puppeteer.launch({
             headless: true
         });
-
         if (!fs.existsSync('./public/downloads/')) {
-            console.log('Creating downloads directory...');
             fs.mkdirSync('./public/downloads/', {recursive: true});
             touch('index.html');
         }
-
+        // Create a new page
         const page = await browser.newPage();
         page.setDefaultTimeout(0);
 
         try {
-            console.log('Navigating to login page...');
+            // Go to the login page
+            console.log('Going to the login page...');
             await page.goto('https://www.realgpl.com/my-account/');
 
+
+
             try {
-                console.log('Handling consent popup if present...');
+                //consent label
                 await Promise.all([
                     page.click('.fc-button-label'),
                 ]);
-                console.log('Consent popup handled');
             } catch (error) {
-                console.log('No consent popup found');
+                console.log('No Consent block')
             }
 
-            const username = process.env.USERNAME;
-            const password = process.env.PASSWORD;
-            
-            // Attempt login with retry logic
-            await attemptLogin(page, username, password);
+
+
+            var username =  process.env.USERNAME;
+            var password = process.env.PASSWORD;
+            // Fill in the login credentials
+            console.log('Typing username...');
+
+            await page.type('#username',username.toString());
+
+            console.log('Typing password...');
+            await page.type('#password',password.toString());
+
+            // Handle CAPTCHA
+            await new Promise(async (resolve) => {
+                try {
+                    // Wait for CAPTCHA element to be present
+                    await page.waitForSelector('.aiowps-captcha-equation');
+                    
+                    // Get the CAPTCHA answer input field
+                    const captchaInput = await page.$('.aiowps-captcha-answer');
+                    
+                    // Type the answer (9) into the CAPTCHA field
+                    await captchaInput.type('9');
+                    
+                    resolve();
+                } catch (error) {
+                    console.log('CAPTCHA handling error:', error);
+                    resolve(); // Resolve anyway to continue with login
+                }
+            });
+
+            console.log('Clicking the login button...');
+               await Promise.all([
+                   page.waitForNavigation(),
+                   page.click('.button.woocommerce-button.woocommerce-form-login__submit'),
+               ]);
+
 
             // Go to the changelog page
             console.log('Going to the changelog page...');
             await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=250');
-            
+                console.log(date)
             console.log('Changelog page...');
+
 
             var theDate = new Date(date).toLocaleDateString('en-US', {
                 year: 'numeric',
                 month: 'long',
                 day: 'numeric',
             });
-            console.log('Processing date:', theDate);
+            console.log(theDate);
             const data = await page.evaluate((theDate) => {
                 const rows = document.querySelectorAll('tr.awcpt-row');
                 const rowDataArray = [];
 
                 for (const row of rows) {
                     var date = row.querySelector('.awcpt-date').innerText;
-                    // This determines date of the update
+                    // This determanice date of the update
                     if (theDate === date) {
                         try {
                             const id = row.getAttribute('data-id');
                             const productName = row.querySelector('.awcpt-title').innerText;
-                            
-                            // Get download button info
-                            const downloadButton = row.querySelector('.awcpt-shortcode-wrap a');
-                            let downloadInfo = {
-                                link: null,
-                                isLocked: false,
-                                buttonSelector: null
-                            };
-
-                            if (downloadButton) {
-                                downloadInfo = {
-                                    link: downloadButton.getAttribute('href'),
-                                    isLocked: downloadButton.classList.contains('locked'),
-                                    buttonSelector: Array.from(downloadButton.classList)
-                                        .filter(c => c !== 'locked' && c !== 'unlocked' && c !== 'yith-wcmbs-download-button')
-                                        .join('.')
-                                };
-                                console.log(`Found ${downloadInfo.isLocked ? 'locked' : 'unlocked'} download button for: ${productName}`);
-                            } else {
-                                console.log(`No download button found for: ${productName}`);
-                            }
-                            
+                            const downloadLink = row.querySelector('.awcpt-shortcode-wrap a').getAttribute('href');
                             const productURL = row.querySelector('.awcpt-prdTitle-col a').getAttribute('href');
 
                             // Create an object with the extracted data for each row
@@ -238,109 +139,121 @@ const scheduledTask = async (date = new Date()) => {
                                 id,
                                 productName,
                                 date,
-                                downloadInfo,
-                                productURL
+                                downloadLink,
+                                productURL, // Add the product URL to the object
                             };
 
-                            if (downloadInfo.link) {
-                                rowDataArray.push(rowData);
-                            } else {
-                                console.log(`Skipping (no download link): ${productName}`);
-                            }
-                        } catch (e) {
-                            console.error('Error processing row:', e);
+                            rowDataArray.push(rowData); }
+                        catch (e) {
+                            console.error(e);
                         }
                     }
+
                 }
                 return rowDataArray;
             }, theDate);
 
-            console.log(`Found ${data.length} items for ${theDate}`);
-            
+            console.log('Changelog entries for ', theDate);
+            console.log(data);
+
+            // Process each title and extract relevant information
+            for (let i = 0; i < data.length; i++) {
+                let text = data[i].productName;
+
+                // Extract version
+                if (/\d/.test(text)) {
+                    let url = '';
+                    let versionWithoutV = '';
+                    let textWithoutVersion = '';
+                    let slug = '';
+                    let productId = '';
+                    try {
+                        let version = text.match(/v\d+(\.\d+){0,3}/)[0];
+
+                        // Remove 'v' from version
+                        versionWithoutV = version.replace('v', '');
+                        // Remove version from title
+                        textWithoutVersion = text.replace(/ v\d+(\.\d+){0,3}/, '');
+
+                    } catch (e) {
+                        console.log(e);
+                    }
+                    url = data[i].productURL;
+                    try {
+
+                        let parsedUrl = new URL(url);
+                        url = url.replace(/^\/|\/$/g, '');
+
+                        // Get the last part of the URL after the last slash
+                        let parts = url.split('/');
+                        slug = parts[parts.length - 1];// Extract the slug from the URL
+                        productId = parsedUrl.searchParams.get("product_id");
+                    } catch (e) {
+                        console.log(e);
+                    }// Get the product_id parameter value
+                    data[i].version = versionWithoutV;
+                    data[i].name = textWithoutVersion;
+                    data[i].slug = slug;
+                    data[i].filename = '';
+                    data[i].filePath = '';
+                    data[i].productId = productId;
+
+                }
+            }
+            console.log('Data processing completed.');
+
             // Process each title and download the files
             let fileCounter = 0;
             let errorCounter = 0;
-            
             for (let i = 0; i < data.length; i++) {
-                const item = data[i];
-                console.log(`\nProcessing download ${i + 1}/${data.length}: ${item.productName}`);
-                
+                console.log(`Starting download for file ${i + 1} of ${data.length}...`);
                 try {
-                    if (!item.downloadInfo.link) {
-                        console.log('No download link available, skipping...');
-                        continue;
-                    }
-
-                    // If item is locked, we need to click the button first
-                    if (item.downloadInfo.isLocked && item.downloadInfo.buttonSelector) {
-                        console.log('Item is locked, clicking download button...');
-                        try {
-                            // Wait for and click the specific download button
-                            await page.waitForSelector(`.${item.downloadInfo.buttonSelector}`);
-                            await page.click(`.${item.downloadInfo.buttonSelector}`);
-                            console.log('Clicked locked download button');
-                            
-                            // Wait a moment for any redirects or updates
-                            await page.waitForTimeout(2000);
-                        } catch (clickError) {
-                            console.error('Error clicking locked download button:', clickError.message);
-                            continue;
-                        }
-                    }
-
                     // Get cookies from Puppeteer
                     const cookies = await page.cookies();
-                    console.log('Got session cookies');
 
                     // Format cookies for axios
                     const formattedCookies = cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
 
                     // Use axios to download the file
-                    console.log('Starting download from:', item.downloadInfo.link);
                     const response = await axios({
-                        url: item.downloadInfo.link,
+                        url: data[i].downloadLink,
                         method: 'GET',
                         responseType: 'stream',
                         headers: {
                             Cookie: formattedCookies
                         }
                     });
-
-                    // Extract the filename from the URL or product name
-                    var modifiedString = item.productName.toLowerCase()
-                        .replace(/[^a-z0-9]+/g, '-')
-                        .replace(/-+/g, '-')
-                        .replace(/^-|-$/g, '');
+                    // Extract the filename from the URL
+                    var modifiedString = data[i].slug.replace(/-download$/, "");
+                    modifiedString = data[i].slug.replace(/download-/, "");
                     var filename = `${modifiedString}.zip`;
 
                     // Set the file path
                     const filePath = path.join('./public/downloads/', filename);
-                    console.log('Saving to:', filePath);
                     touch(filePath);
-
                     // Download the file and save it to the specified path
                     await pipeline(response.data, fs.createWriteStream(filePath));
 
-                    // Update the data array with the filename and file path
+                    // Update the titles array with the filename and file path
                     data[i].filename = filename;
                     data[i].filePath = filePath;
+
                     data[i].fileUrl = path.join(process.env.DOWNLOAD_URL, filename);
-                    
-                    console.log('Download successful:', item.productName);
+                    console.log('Download Successful: ', data[i].productName)
                     fileCounter++;
                     list.push(data[i]);
                 } catch (e) {
                     errorCounter++;
-                    console.error(`Failed to download: ${item.productName}`);
-                    console.error('Error:', e.message);
+                    console.error(`Failed to download from link: ${data[i].downloadLink}`);
+                    console.error(e);
                     error.push(data[i]);
+
                 }
+
             }
 
-            console.log('\nDownload Summary:');
-            console.log(`Successfully downloaded: ${fileCounter} files`);
-            console.log(`Failed downloads: ${errorCounter}`);
-
+            console.log('Downloaded files:', fileCounter);
+            console.log('Errors:', errorCounter);
             // Close the Puppeteer browser
             await browser.close();
 
