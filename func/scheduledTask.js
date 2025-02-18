@@ -210,14 +210,23 @@ const scheduledTask = async (date = new Date()) => {
                             const id = row.getAttribute('data-id');
                             const productName = row.querySelector('.awcpt-title').innerText;
                             
-                            // Get download link if available
-                            let downloadLink = null;
-                            let isLocked = false;
+                            // Get download button info
                             const downloadButton = row.querySelector('.awcpt-shortcode-wrap a');
+                            let downloadInfo = {
+                                link: null,
+                                isLocked: false,
+                                buttonSelector: null
+                            };
+
                             if (downloadButton) {
-                                downloadLink = downloadButton.getAttribute('href');
-                                isLocked = downloadButton.classList.contains('locked');
-                                console.log(`Found ${isLocked ? 'locked' : 'unlocked'} download button for: ${productName}`);
+                                downloadInfo = {
+                                    link: downloadButton.getAttribute('href'),
+                                    isLocked: downloadButton.classList.contains('locked'),
+                                    buttonSelector: Array.from(downloadButton.classList)
+                                        .filter(c => c !== 'locked' && c !== 'unlocked' && c !== 'yith-wcmbs-download-button')
+                                        .join('.')
+                                };
+                                console.log(`Found ${downloadInfo.isLocked ? 'locked' : 'unlocked'} download button for: ${productName}`);
                             } else {
                                 console.log(`No download button found for: ${productName}`);
                             }
@@ -229,15 +238,14 @@ const scheduledTask = async (date = new Date()) => {
                                 id,
                                 productName,
                                 date,
-                                downloadLink,
-                                productURL,
-                                isLocked
+                                downloadInfo,
+                                productURL
                             };
 
-                            if (downloadLink && !isLocked) {
+                            if (downloadInfo.link) {
                                 rowDataArray.push(rowData);
                             } else {
-                                console.log(`Skipping ${isLocked ? 'locked' : 'missing download link for'}: ${productName}`);
+                                console.log(`Skipping (no download link): ${productName}`);
                             }
                         } catch (e) {
                             console.error('Error processing row:', e);
@@ -247,7 +255,7 @@ const scheduledTask = async (date = new Date()) => {
                 return rowDataArray;
             }, theDate);
 
-            console.log(`Found ${data.length} downloadable items for ${theDate}`);
+            console.log(`Found ${data.length} items for ${theDate}`);
             
             // Process each title and download the files
             let fileCounter = 0;
@@ -258,14 +266,26 @@ const scheduledTask = async (date = new Date()) => {
                 console.log(`\nProcessing download ${i + 1}/${data.length}: ${item.productName}`);
                 
                 try {
-                    if (!item.downloadLink) {
+                    if (!item.downloadInfo.link) {
                         console.log('No download link available, skipping...');
                         continue;
                     }
 
-                    if (item.isLocked) {
-                        console.log('Item is locked (requires credits), skipping...');
-                        continue;
+                    // If item is locked, we need to click the button first
+                    if (item.downloadInfo.isLocked && item.downloadInfo.buttonSelector) {
+                        console.log('Item is locked, clicking download button...');
+                        try {
+                            // Wait for and click the specific download button
+                            await page.waitForSelector(`.${item.downloadInfo.buttonSelector}`);
+                            await page.click(`.${item.downloadInfo.buttonSelector}`);
+                            console.log('Clicked locked download button');
+                            
+                            // Wait a moment for any redirects or updates
+                            await page.waitForTimeout(2000);
+                        } catch (clickError) {
+                            console.error('Error clicking locked download button:', clickError.message);
+                            continue;
+                        }
                     }
 
                     // Get cookies from Puppeteer
@@ -276,9 +296,9 @@ const scheduledTask = async (date = new Date()) => {
                     const formattedCookies = cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
 
                     // Use axios to download the file
-                    console.log('Starting download from:', item.downloadLink);
+                    console.log('Starting download from:', item.downloadInfo.link);
                     const response = await axios({
-                        url: item.downloadLink,
+                        url: item.downloadInfo.link,
                         method: 'GET',
                         responseType: 'stream',
                         headers: {
@@ -286,10 +306,11 @@ const scheduledTask = async (date = new Date()) => {
                         }
                     });
 
-                    // Extract the filename from the URL
-                    var modifiedString = item.slug?.replace(/-download$/, "") || 
-                                      item.productName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-                    modifiedString = modifiedString.replace(/download-/, "");
+                    // Extract the filename from the URL or product name
+                    var modifiedString = item.productName.toLowerCase()
+                        .replace(/[^a-z0-9]+/g, '-')
+                        .replace(/-+/g, '-')
+                        .replace(/^-|-$/g, '');
                     var filename = `${modifiedString}.zip`;
 
                     // Set the file path
