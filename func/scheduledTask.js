@@ -41,100 +41,149 @@ function touch(filename) {
 async function handleLogin(page) {
     console.log('Starting login process...');
     
-    // Go to the login page
+    // Go to the login page with full load waiting
     console.log('Navigating to login page...');
-    await page.goto('https://www.realgpl.com/my-account/', {
-        waitUntil: 'networkidle0',
-        timeout: 60000
-    });
-    
-    // Handle consent if present
     try {
-        const consentButton = await page.$('.fc-button-label');
-        if (consentButton) {
-            console.log('Handling consent popup...');
-            await consentButton.click();
-            await page.waitForTimeout(1000); // Wait for animation
-        }
-    } catch (error) {
-        console.log('No consent popup found');
-    }
-    
-    // Try login up to 3 times
-    for (let attempt = 1; attempt <= 3; attempt++) {
-        console.log(`\nLogin attempt ${attempt} of 3`);
+        await page.goto('https://www.realgpl.com/my-account/', {
+            waitUntil: ['networkidle0', 'domcontentloaded', 'load'],
+            timeout: 60000
+        });
+
+        // Wait for critical elements to be truly ready
+        console.log('Waiting for page to be fully interactive...');
+        await Promise.all([
+            page.waitForSelector('#username', { visible: true, timeout: 30000 }),
+            page.waitForSelector('#password', { visible: true, timeout: 30000 }),
+            page.waitForSelector('.aiowps-captcha-equation', { visible: true, timeout: 30000 }),
+            page.waitForSelector('.woocommerce-form-login__submit', { visible: true, timeout: 30000 })
+        ]);
+
+        // Additional wait to ensure JavaScript is fully loaded
+        await page.waitForFunction(() => {
+            return document.readyState === 'complete' && 
+                   !document.querySelector('.loading') &&
+                   window.jQuery !== undefined;
+        }, { timeout: 30000 });
+
+        console.log('Page is fully loaded and interactive');
         
+        // Handle consent if present
         try {
-            // Clear any existing input before retry
-            if (attempt > 1) {
-                console.log('Clearing previous input...');
-                await page.evaluate(() => {
-                    document.querySelector('#username').value = '';
-                    document.querySelector('#password').value = '';
-                    const captchaInput = document.querySelector('.aiowps-captcha-answer');
-                    if (captchaInput) captchaInput.value = '';
-                });
-                await page.reload({ waitUntil: 'networkidle0' });
-                await page.waitForTimeout(2000); // Wait for page to stabilize
+            const consentButton = await page.$('.fc-button-label');
+            if (consentButton) {
+                console.log('Handling consent popup...');
+                await consentButton.click();
+                // Wait for consent animation to complete
+                await page.waitForTimeout(1500);
+                // Wait for any overlay to disappear
+                await page.waitForFunction(() => {
+                    const overlay = document.querySelector('.fc-consent-overlay');
+                    return !overlay || overlay.style.display === 'none';
+                }, { timeout: 5000 });
             }
-            
-            // Get and log the current captcha equation before solving
-            const captchaElement = await page.$('.aiowps-captcha-equation strong');
-            if (captchaElement) {
-                const captchaText = await page.evaluate(el => el.textContent, captchaElement);
-                console.log('Current captcha:', captchaText.trim());
-            }
-            
-            // Fill in credentials
-            console.log('Entering credentials...');
-            await page.type('#username', process.env.USERNAME);
-            await page.type('#password', process.env.PASSWORD);
-            
-            // Handle captcha
-            console.log('Solving captcha...');
-            const html = await page.content();
-            const captchaSolution = extractAndSolveCaptcha(html);
-            console.log('Captcha equation:', captchaSolution.equation);
-            console.log('Captcha answer:', captchaSolution.answer);
-            
-            await page.type('.aiowps-captcha-answer', captchaSolution.answer.toString());
-            
-            // Submit form and wait for navigation
-            console.log('Submitting login form...');
-            await Promise.all([
-                page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 30000 }),
-                page.click('.woocommerce-form-login__submit')
-            ]);
-            
-            // Verify login success
-            const errorMessage = await page.$('.woocommerce-error');
-            if (errorMessage) {
-                const error = await page.evaluate(el => el.textContent, errorMessage);
-                console.log('Login failed:', error.trim());
-                if (attempt < 3) await page.waitForTimeout(3000); // Wait before retry
-                continue;
-            }
-            
-            const loggedInElement = await page.$('.woocommerce-MyAccount-navigation');
-            if (loggedInElement) {
-                console.log('Login successful!');
-                return true;
-            }
-            
-            console.log('Login status unclear - no error but not on account page');
-            if (attempt < 3) await page.waitForTimeout(3000);
-            
         } catch (error) {
-            console.error(`Error during login attempt ${attempt}:`, error.message);
-            if (attempt < 3) {
-                console.log('Waiting before retry...');
-                await page.waitForTimeout(3000);
+            console.log('No consent popup found or already handled');
+        }
+        
+        // Try login up to 3 times
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            console.log(`\nLogin attempt ${attempt} of 3`);
+            
+            try {
+                // Clear any existing input before retry
+                if (attempt > 1) {
+                    console.log('Clearing previous input and reloading...');
+                    await page.evaluate(() => {
+                        document.querySelector('#username').value = '';
+                        document.querySelector('#password').value = '';
+                        const captchaInput = document.querySelector('.aiowps-captcha-answer');
+                        if (captchaInput) captchaInput.value = '';
+                    });
+                    
+                    // Reload and wait for everything to be ready again
+                    await page.reload({ 
+                        waitUntil: ['networkidle0', 'domcontentloaded', 'load'],
+                        timeout: 30000 
+                    });
+                    
+                    // Wait for form elements to be interactive again
+                    await Promise.all([
+                        page.waitForSelector('#username', { visible: true, timeout: 30000 }),
+                        page.waitForSelector('#password', { visible: true, timeout: 30000 }),
+                        page.waitForSelector('.aiowps-captcha-equation', { visible: true, timeout: 30000 })
+                    ]);
+                    
+                    await page.waitForTimeout(2000); // Additional stability wait
+                }
+                
+                // Get and log the current captcha equation before solving
+                const captchaElement = await page.$('.aiowps-captcha-equation strong');
+                if (captchaElement) {
+                    const captchaText = await page.evaluate(el => el.textContent, captchaElement);
+                    console.log('Current captcha:', captchaText.trim());
+                }
+                
+                // Fill in credentials with proper typing simulation
+                console.log('Entering credentials...');
+                await page.type('#username', process.env.USERNAME, { delay: 100 });
+                await page.type('#password', process.env.PASSWORD, { delay: 100 });
+                
+                // Handle captcha
+                console.log('Solving captcha...');
+                const html = await page.content();
+                const captchaSolution = extractAndSolveCaptcha(html);
+                console.log('Captcha equation:', captchaSolution.equation);
+                console.log('Captcha answer:', captchaSolution.answer);
+                
+                await page.type('.aiowps-captcha-answer', captchaSolution.answer.toString(), { delay: 100 });
+                
+                // Submit form and wait for navigation
+                console.log('Submitting login form...');
+                await Promise.all([
+                    page.waitForNavigation({ 
+                        waitUntil: ['networkidle0', 'domcontentloaded', 'load'],
+                        timeout: 30000 
+                    }),
+                    page.click('.woocommerce-form-login__submit')
+                ]);
+                
+                // Wait for post-login page to be fully loaded
+                await page.waitForTimeout(2000);
+                
+                // Verify login success
+                const errorMessage = await page.$('.woocommerce-error');
+                if (errorMessage) {
+                    const error = await page.evaluate(el => el.textContent, errorMessage);
+                    console.log('Login failed:', error.trim());
+                    if (attempt < 3) await page.waitForTimeout(3000);
+                    continue;
+                }
+                
+                const loggedInElement = await page.$('.woocommerce-MyAccount-navigation');
+                if (loggedInElement) {
+                    console.log('Login successful!');
+                    return true;
+                }
+                
+                console.log('Login status unclear - no error but not on account page');
+                if (attempt < 3) await page.waitForTimeout(3000);
+                
+            } catch (error) {
+                console.error(`Error during login attempt ${attempt}:`, error.message);
+                if (attempt < 3) {
+                    console.log('Waiting before retry...');
+                    await page.waitForTimeout(3000);
+                }
             }
         }
+        
+        console.log('All login attempts failed');
+        return false;
+        
+    } catch (error) {
+        console.error('Fatal error during login process:', error);
+        throw error;
     }
-    
-    console.log('All login attempts failed');
-    return false;
 }
 
 /**
