@@ -8,6 +8,7 @@ const {promisify} = require('util');
 const pipeline = promisify(stream.pipeline);
 const convertJsonToCsv = require('./convertJsonToCsv');
 const { extractAndSolveCaptcha } = require('./captcha');
+const { performance } = require('perf_hooks');
 
 // Utility functions
 const ensureDirectoryExistence = (filePath) => {
@@ -31,6 +32,46 @@ function touch(filename) {
 }
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Add utility functions
+const logWithTimestamp = (message) => {
+    const timestamp = new Date().toISOString();
+    console.log(`[${timestamp}] ${message}`);
+};
+
+const measureTime = (startTime, label) => {
+    const duration = performance.now() - startTime;
+    logWithTimestamp(`${label} took ${duration.toFixed(2)}ms`);
+    return duration;
+};
+
+/**
+ * Enhanced error recovery function
+ * @param {Function} operation - Async operation to perform
+ * @param {number} maxRetries - Maximum number of retries
+ * @param {number} baseDelay - Base delay between retries in ms
+ * @param {string} operationName - Name of the operation for logging
+ */
+async function withRetry(operation, maxRetries = 3, baseDelay = 3000, operationName = 'Operation') {
+    let lastError;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            const startTime = performance.now();
+            const result = await operation();
+            measureTime(startTime, `${operationName} - Attempt ${attempt}`);
+            return result;
+        } catch (error) {
+            lastError = error;
+            if (attempt === maxRetries) {
+                logWithTimestamp(`${operationName} failed after ${maxRetries} attempts: ${error.message}`);
+                throw error;
+            }
+            const delay = baseDelay * Math.pow(2, attempt - 1); // Exponential backoff
+            logWithTimestamp(`${operationName} attempt ${attempt} failed, retrying in ${delay}ms`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+        }
+    }
+}
 
 /**
  * Handles the login process with retries
@@ -184,56 +225,85 @@ async function handleLogin(page) {
  * @returns {Promise<Array>} - Array of changelog entries
  */
 async function scrapeChangelogPage(page, theDate, pageNum) {
-    const startTime = Date.now();
-    console.log(`Scraping changelog page ${pageNum}...`);
-    const url = `https://www.realgpl.com/changelog/?99936_results_per_page=50&99936_paged=${pageNum}`;
+    const startTime = performance.now();
+    logWithTimestamp(`Scraping changelog page ${pageNum}...`);
     
+    const url = `https://www.realgpl.com/changelog/?99936_results_per_page=50&99936_paged=${pageNum}`;
     const baseTimeout = 60000;
     const progressiveTimeout = baseTimeout * (1 + (pageNum > 1 ? Math.min(pageNum * 0.2, 1) : 0));
-    console.log(`Using progressive timeout of ${progressiveTimeout}ms for page ${pageNum}`);
     
     try {
+        // Performance optimization: Enable request interception to block unnecessary resources
+        await page.setRequestInterception(true);
+        page.on('request', request => {
+            const resourceType = request.resourceType();
+            if (['image', 'stylesheet', 'font'].includes(resourceType)) {
+                request.abort();
+            } else {
+                request.continue();
+            }
+        });
+
+        logWithTimestamp(`Navigating to page ${pageNum} with ${progressiveTimeout}ms timeout`);
         await page.goto(url, {
             waitUntil: ['networkidle0', 'domcontentloaded', 'load'],
             timeout: progressiveTimeout
         });
-        console.log(`Navigation completed in ${Date.now() - startTime}ms`);
-        
+        measureTime(startTime, 'Navigation');
+
+        const loadStartTime = performance.now();
         await page.waitForFunction(() => {
             return document.readyState === 'complete' && 
                    !document.querySelector('.loading');
         }, { timeout: progressiveTimeout });
-        console.log(`Page fully loaded in ${Date.now() - startTime}ms`);
-        
-        const data = await page.evaluate((theDate) => {
-            const rows = document.querySelectorAll('tr.awcpt-row');
-            const rowDataArray = [];
-            console.log(`Found ${rows.length} rows on page`);
+        measureTime(loadStartTime, 'Page load');
 
-            for (const row of rows) {
-                const date = row.querySelector('.awcpt-date')?.innerText;
-                if (date === theDate) {
-                    try {
-                        rowDataArray.push({
-                            id: row.getAttribute('data-id'),
-                            productName: row.querySelector('.awcpt-title')?.innerText,
-                            date,
-                            downloadLink: row.querySelector('.awcpt-shortcode-wrap a')?.getAttribute('href'),
-                            productURL: row.querySelector('.awcpt-prdTitle-col a')?.getAttribute('href'),
-                        });
-                    } catch (e) {
-                        console.error('Error processing row:', e);
+        // Performance optimization: Use CDP to get page content
+        const cdpStartTime = performance.now();
+        const data = await withRetry(async () => {
+            const result = await page.evaluate((theDate) => {
+                const rows = document.querySelectorAll('tr.awcpt-row');
+                const rowDataArray = [];
+                performance.mark('scraping-start');
+                
+                for (const row of rows) {
+                    const date = row.querySelector('.awcpt-date')?.innerText;
+                    if (date === theDate) {
+                        try {
+                            rowDataArray.push({
+                                id: row.getAttribute('data-id'),
+                                productName: row.querySelector('.awcpt-title')?.innerText,
+                                date,
+                                downloadLink: row.querySelector('.awcpt-shortcode-wrap a')?.getAttribute('href'),
+                                productURL: row.querySelector('.awcpt-prdTitle-col a')?.getAttribute('href'),
+                            });
+                        } catch (e) {
+                            console.error('Error processing row:', e);
+                        }
                     }
                 }
-            }
-            return rowDataArray;
-        }, theDate);
-
-        console.log(`Found ${data.length} matching entries on page ${pageNum}`);
+                
+                performance.mark('scraping-end');
+                performance.measure('scraping', 'scraping-start', 'scraping-end');
+                return rowDataArray;
+            }, theDate);
+            return result;
+        }, 3, 5000, `Page ${pageNum} data extraction`);
+        
+        measureTime(cdpStartTime, 'Data extraction');
+        logWithTimestamp(`Found ${data.length} matching entries on page ${pageNum}`);
+        
+        // Disable request interception after we're done
+        await page.setRequestInterception(false);
         return data;
+        
     } catch (error) {
-        console.error(`Error scraping changelog page ${pageNum}:`, error.message);
+        logWithTimestamp(`Error scraping changelog page ${pageNum}: ${error.message}`);
+        // Ensure we disable request interception even on error
+        await page.setRequestInterception(false);
         return [];
+    } finally {
+        measureTime(startTime, `Total page ${pageNum} processing`);
     }
 }
 
@@ -350,29 +420,25 @@ const scheduledTask = async (date = new Date()) => {
         let fileCounter = 0;
         let errorCounter = 0;
         for (const item of allData) {
-            const downloadStartTime = Date.now();
-            console.log(`Starting download for file ${fileCounter + 1} of ${allData.length}...`);
+            const downloadStartTime = performance.now();
+            logWithTimestamp(`Starting download for file ${fileCounter + 1} of ${allData.length}`);
             
-            const baseDownloadTimeout = 120000;
-            let currentRetry = 0;
-            const maxRetries = 3;
-            
-            while (currentRetry < maxRetries) {
-                try {
-                    const progressiveDownloadTimeout = baseDownloadTimeout * (1 + currentRetry * 0.5);
-                    console.log(`Attempt ${currentRetry + 1} with timeout ${progressiveDownloadTimeout}ms`);
-                    
+            try {
+                await withRetry(async () => {
                     const cookies = await page.cookies();
                     const formattedCookies = cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
-
+                    
                     const response = await axios({
                         url: item.downloadLink,
                         method: 'GET',
                         responseType: 'stream',
                         headers: {
-                            Cookie: formattedCookies
+                            Cookie: formattedCookies,
+                            'User-Agent': await page.evaluate(() => navigator.userAgent)
                         },
-                        timeout: progressiveDownloadTimeout
+                        timeout: 120000,
+                        maxContentLength: Infinity,
+                        maxBodyLength: Infinity
                     });
 
                     const modifiedString = item.slug.replace(/-download$/, "").replace(/download-/, "");
@@ -382,31 +448,20 @@ const scheduledTask = async (date = new Date()) => {
                     touch(filePath);
                     await pipeline(response.data, fs.createWriteStream(filePath));
 
-                    console.log(`Download completed in ${Date.now() - downloadStartTime}ms`);
-                    
                     item.filename = filename;
                     item.filePath = filePath;
                     item.fileUrl = path.join(process.env.DOWNLOAD_URL, filename);
-                    console.log('Download Successful:', item.productName);
+                    
                     fileCounter++;
                     list.push(item);
-                    break;
                     
-                } catch (e) {
-                    currentRetry++;
-                    console.error(`Download attempt ${currentRetry} failed after ${Date.now() - downloadStartTime}ms`);
-                    console.error(`Error: ${e.message}`);
-                    
-                    if (currentRetry === maxRetries) {
-                        errorCounter++;
-                        console.error(`All ${maxRetries} download attempts failed for: ${item.downloadLink}`);
-                        error.push(item);
-                    } else {
-                        const retryWaitTime = currentRetry * 5000;
-                        console.log(`Waiting ${retryWaitTime}ms before next attempt...`);
-                        await delay(retryWaitTime);
-                    }
-                }
+                    measureTime(downloadStartTime, `Download of ${filename}`);
+                    return true;
+                }, 3, 5000, `Download of ${item.productName}`);
+            } catch (error) {
+                errorCounter++;
+                logWithTimestamp(`Failed to download ${item.productName}: ${error.message}`);
+                error.push(item);
             }
         }
 
