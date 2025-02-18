@@ -6,8 +6,7 @@ var cookieParser = require('cookie-parser');
 var logger = require('morgan');
 const fs = require('fs');
 const dbJson = require('simple-json-db')
-const scheduledTask = require('./func/scheduledTask');
-const scheduledTaskYesterday = require('./func/scheduledTaskYesterday'); // Import the scheduled task
+const scheduledTask = require('./func/scheduledTask'); // Import the scheduled task
 var date = new Date();
 var app = express();
 app.use(logger('dev'));
@@ -26,7 +25,6 @@ function executeAfterAnHour()    {
                 });
             }
         });
-        // Your code here
     }, 3600000); // 3600000 milliseconds = 1 hour
 }
 app.use(express.static(path.join(__dirname, 'public')));
@@ -36,7 +34,7 @@ app.use('/refresh', async(req,res) => {
         date = new Date(req.query.date);
     }
     console.log(date);
-    scheduledTaskYesterday(date).then(downloads => {
+    scheduledTask(date).then(downloads => {
 
 
             executeAfterAnHour();
