@@ -196,11 +196,11 @@ async function handleLogin(page) {
 async function scrapeChangelogPage(page, theDate, pageNum) {
     const startTime = Date.now();
     console.log(`Scraping changelog page ${pageNum}...`);
-    const url = `https://www.realgpl.com/changelog/?99936_results_per_page=250&99936_paged=${pageNum}`;
+    const url = `https://www.realgpl.com/changelog/?99936_results_per_page=50&99936_paged=${pageNum}`;
     
-    // Calculate progressive timeout based on page number
-    const baseTimeout = 120000;
-    const progressiveTimeout = baseTimeout * (pageNum > 1 ? 1.5 : 1);
+    // Calculate progressive timeout based on page number but with lower base due to fewer items
+    const baseTimeout = 60000; // Reduced from 120000 since we're fetching fewer items
+    const progressiveTimeout = baseTimeout * (1 + (pageNum > 1 ? Math.min(pageNum * 0.2, 1) : 0));
     console.log(`Using progressive timeout of ${progressiveTimeout}ms for page ${pageNum}`);
     
     try {
@@ -300,8 +300,11 @@ const scheduledTask = async (date = new Date()) => {
         console.log('Starting changelog scraping...');
         let allData = [];
         let currentPage = 1;
-        let maxPages = daysDiff > 3 ? 2 : 1; // Check up to 2 pages if date is more than 3 days ago
+        // Increase max pages but with fewer items per page
+        let maxPages = daysDiff > 3 ? 10 : 5; // Increased from 2/1 to 10/5
         let foundEntries = false;
+        let consecutiveEmptyPages = 0;
+        const MAX_EMPTY_PAGES = 3; // Stop after 3 consecutive empty pages
 
         const theDate = new Date(date).toLocaleDateString('en-US', {
             year: 'numeric',
@@ -318,22 +321,26 @@ const scheduledTask = async (date = new Date()) => {
                 console.log(`Found ${pageData.length} entries on page ${currentPage}`);
                 allData = allData.concat(pageData);
                 foundEntries = true;
-            } else if (foundEntries) {
-                console.log('No more entries found on subsequent page, stopping pagination');
-                break;
-            } else if (currentPage === maxPages) {
-                console.log(`No entries found after checking ${maxPages} pages`);
-                break;
+                consecutiveEmptyPages = 0; // Reset counter when we find entries
+            } else {
+                consecutiveEmptyPages++;
+                console.log(`No entries found on page ${currentPage}. Empty pages in a row: ${consecutiveEmptyPages}`);
+                
+                if (foundEntries && consecutiveEmptyPages >= MAX_EMPTY_PAGES) {
+                    console.log(`No entries found in ${MAX_EMPTY_PAGES} consecutive pages, stopping pagination`);
+                    break;
+                }
             }
             
             currentPage++;
             if (currentPage <= maxPages) {
-                console.log('Waiting 4 seconds before next page...');
-                await new Promise(resolve => setTimeout(resolve, 4000));
+                const waitTime = 3000 + (currentPage > 5 ? 2000 : 0); // Progressive wait time
+                console.log(`Waiting ${waitTime}ms before next page...`);
+                await new Promise(resolve => setTimeout(resolve, waitTime));
             }
         }
 
-        console.log(`Total entries found: ${allData.length}`);
+        console.log(`Total entries found: ${allData.length} across ${currentPage - 1} pages`);
         
         // Process the found entries
         for (let i = 0; i < allData.length; i++) {
