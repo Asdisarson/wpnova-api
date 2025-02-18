@@ -86,6 +86,53 @@ async function attemptLogin(page) {
     }
 }
 
+/**
+ * Scrapes changelog data from a specific page
+ * @param {Page} page - Puppeteer page object
+ * @param {string} theDate - Target date string
+ * @param {number} pageNum - Page number to scrape
+ * @returns {Promise<Array>} - Array of changelog entries
+ */
+async function scrapeChangelogPage(page, theDate, pageNum) {
+    console.log(`Scraping changelog page ${pageNum}...`);
+    const url = `https://www.realgpl.com/changelog/?99936_results_per_page=250&99936_paged=${pageNum}`;
+    
+    await page.goto(url);
+    console.log(`Navigated to page ${pageNum}`);
+    
+    const data = await page.evaluate((theDate) => {
+        const rows = document.querySelectorAll('tr.awcpt-row');
+        const rowDataArray = [];
+        console.log(`Found ${rows.length} rows on page`);
+
+        for (const row of rows) {
+            var date = row.querySelector('.awcpt-date').innerText;
+            if (theDate === date) {
+                try {
+                    const id = row.getAttribute('data-id');
+                    const productName = row.querySelector('.awcpt-title').innerText;
+                    const downloadLink = row.querySelector('.awcpt-shortcode-wrap a').getAttribute('href');
+                    const productURL = row.querySelector('.awcpt-prdTitle-col a').getAttribute('href');
+
+                    rowDataArray.push({
+                        id,
+                        productName,
+                        date,
+                        downloadLink,
+                        productURL,
+                    });
+                } catch (e) {
+                    console.error('Error processing row:', e);
+                }
+            }
+        }
+        return rowDataArray;
+    }, theDate);
+
+    console.log(`Found ${data.length} matching entries on page ${pageNum}`);
+    return data;
+}
+
 const scheduledTask = async (date = new Date()) => {
     const dbPath = path.join(__dirname, 'files.json');
     ensureDirectoryExistence(dbPath);
@@ -93,8 +140,13 @@ const scheduledTask = async (date = new Date()) => {
     db.JSON({});
     let list = [];
     let error = [];
+
+    // Calculate days difference
+    const today = new Date();
+    const daysDiff = Math.floor((today - date) / (1000 * 60 * 60 * 24));
+    console.log(`Searching for updates from ${daysDiff} days ago`);
+
     try {
-        // Launch Puppeteer browser
         console.log('Launching Puppeteer browser...');
         const browser = await puppeteer.launch({
             headless: true
@@ -103,17 +155,14 @@ const scheduledTask = async (date = new Date()) => {
             fs.mkdirSync('./public/downloads/', {recursive: true});
             touch('index.html');
         }
-        // Create a new page
         const page = await browser.newPage();
         page.setDefaultTimeout(0);
 
         try {
-            // Go to the login page
             console.log('Going to the login page...');
             await page.goto('https://www.realgpl.com/my-account/');
 
             try {
-                //consent label
                 await Promise.all([
                     page.click('.fc-button-label'),
                 ]);
@@ -121,26 +170,23 @@ const scheduledTask = async (date = new Date()) => {
                 console.log('No Consent block')
             }
 
-            // Try login up to 3 times
+            // Login attempts
             let loginSuccess = false;
             for (let attempt = 1; attempt <= 3; attempt++) {
                 console.log(`Login attempt ${attempt} of 3`);
                 
-                // Clear any existing input before retry
                 if (attempt > 1) {
                     await page.evaluate(() => {
                         document.querySelector('#username').value = '';
                         document.querySelector('#password').value = '';
                         document.querySelector('.aiowps-captcha-answer').value = '';
                     });
-                    // Refresh the page to get a new captcha
                     await page.reload();
                 }
 
                 loginSuccess = await attemptLogin(page);
                 if (loginSuccess) break;
                 
-                // Wait 2 seconds between attempts
                 if (!loginSuccess && attempt < 3) {
                     console.log('Waiting before next attempt...');
                     await new Promise(resolve => setTimeout(resolve, 2000));
@@ -151,57 +197,48 @@ const scheduledTask = async (date = new Date()) => {
                 throw new Error('Failed to login after 3 attempts');
             }
 
-            // Go to the changelog page
-            console.log('Going to the changelog page...');
-            await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=250');
-                console.log(date)
-            console.log('Changelog page...');
+            // Changelog scraping with pagination
+            console.log('Starting changelog scraping...');
+            let allData = [];
+            let currentPage = 1;
+            let maxPages = daysDiff > 3 ? 2 : 1; // Check up to 2 pages if date is more than 3 days ago
+            let foundEntries = false;
 
-            var theDate = new Date(date).toLocaleDateString('en-US', {
+            const theDate = new Date(date).toLocaleDateString('en-US', {
                 year: 'numeric',
                 month: 'long',
                 day: 'numeric',
             });
-            console.log(theDate);
-            const data = await page.evaluate((theDate) => {
-                const rows = document.querySelectorAll('tr.awcpt-row');
-                const rowDataArray = [];
+            console.log(`Looking for entries from: ${theDate}`);
 
-                for (const row of rows) {
-                    var date = row.querySelector('.awcpt-date').innerText;
-                    // This determanice date of the update
-                    if (theDate === date) {
-                        try {
-                            const id = row.getAttribute('data-id');
-                            const productName = row.querySelector('.awcpt-title').innerText;
-                            const downloadLink = row.querySelector('.awcpt-shortcode-wrap a').getAttribute('href');
-                            const productURL = row.querySelector('.awcpt-prdTitle-col a').getAttribute('href');
-
-                            // Create an object with the extracted data for each row
-                            const rowData = {
-                                id,
-                                productName,
-                                date,
-                                downloadLink,
-                                productURL, // Add the product URL to the object
-                            };
-
-                            rowDataArray.push(rowData); }
-                        catch (e) {
-                            console.error(e);
-                        }
-                    }
-
+            while (currentPage <= maxPages) {
+                console.log(`Processing page ${currentPage} of ${maxPages}`);
+                const pageData = await scrapeChangelogPage(page, theDate, currentPage);
+                
+                if (pageData.length > 0) {
+                    console.log(`Found ${pageData.length} entries on page ${currentPage}`);
+                    allData = allData.concat(pageData);
+                    foundEntries = true;
+                } else if (foundEntries) {
+                    console.log('No more entries found on subsequent page, stopping pagination');
+                    break;
+                } else if (currentPage === maxPages) {
+                    console.log(`No entries found after checking ${maxPages} pages`);
+                    break;
                 }
-                return rowDataArray;
-            }, theDate);
+                
+                currentPage++;
+                if (currentPage <= maxPages) {
+                    console.log('Waiting 2 seconds before next page...');
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                }
+            }
 
-            console.log('Changelog entries for ', theDate);
-            console.log(data);
-
-            // Process each title and extract relevant information
-            for (let i = 0; i < data.length; i++) {
-                let text = data[i].productName;
+            console.log(`Total entries found: ${allData.length}`);
+            
+            // Process the found entries
+            for (let i = 0; i < allData.length; i++) {
+                let text = allData[i].productName;
 
                 // Extract version
                 if (/\d/.test(text)) {
@@ -221,7 +258,7 @@ const scheduledTask = async (date = new Date()) => {
                     } catch (e) {
                         console.log(e);
                     }
-                    url = data[i].productURL;
+                    url = allData[i].productURL;
                     try {
 
                         let parsedUrl = new URL(url);
@@ -234,12 +271,12 @@ const scheduledTask = async (date = new Date()) => {
                     } catch (e) {
                         console.log(e);
                     }// Get the product_id parameter value
-                    data[i].version = versionWithoutV;
-                    data[i].name = textWithoutVersion;
-                    data[i].slug = slug;
-                    data[i].filename = '';
-                    data[i].filePath = '';
-                    data[i].productId = productId;
+                    allData[i].version = versionWithoutV;
+                    allData[i].name = textWithoutVersion;
+                    allData[i].slug = slug;
+                    allData[i].filename = '';
+                    allData[i].filePath = '';
+                    allData[i].productId = productId;
 
                 }
             }
@@ -248,8 +285,8 @@ const scheduledTask = async (date = new Date()) => {
             // Process each title and download the files
             let fileCounter = 0;
             let errorCounter = 0;
-            for (let i = 0; i < data.length; i++) {
-                console.log(`Starting download for file ${i + 1} of ${data.length}...`);
+            for (let i = 0; i < allData.length; i++) {
+                console.log(`Starting download for file ${i + 1} of ${allData.length}...`);
                 try {
                     // Get cookies from Puppeteer
                     const cookies = await page.cookies();
@@ -259,7 +296,7 @@ const scheduledTask = async (date = new Date()) => {
 
                     // Use axios to download the file
                     const response = await axios({
-                        url: data[i].downloadLink,
+                        url: allData[i].downloadLink,
                         method: 'GET',
                         responseType: 'stream',
                         headers: {
@@ -267,8 +304,8 @@ const scheduledTask = async (date = new Date()) => {
                         }
                     });
                     // Extract the filename from the URL
-                    var modifiedString = data[i].slug.replace(/-download$/, "");
-                    modifiedString = data[i].slug.replace(/download-/, "");
+                    var modifiedString = allData[i].slug.replace(/-download$/, "");
+                    modifiedString = allData[i].slug.replace(/download-/, "");
                     var filename = `${modifiedString}.zip`;
 
                     // Set the file path
@@ -278,18 +315,18 @@ const scheduledTask = async (date = new Date()) => {
                     await pipeline(response.data, fs.createWriteStream(filePath));
 
                     // Update the titles array with the filename and file path
-                    data[i].filename = filename;
-                    data[i].filePath = filePath;
+                    allData[i].filename = filename;
+                    allData[i].filePath = filePath;
 
-                    data[i].fileUrl = path.join(process.env.DOWNLOAD_URL, filename);
-                    console.log('Download Successful: ', data[i].productName)
+                    allData[i].fileUrl = path.join(process.env.DOWNLOAD_URL, filename);
+                    console.log('Download Successful: ', allData[i].productName)
                     fileCounter++;
-                    list.push(data[i]);
+                    list.push(allData[i]);
                 } catch (e) {
                     errorCounter++;
-                    console.error(`Failed to download from link: ${data[i].downloadLink}`);
+                    console.error(`Failed to download from link: ${allData[i].downloadLink}`);
                     console.error(e);
-                    error.push(data[i]);
+                    error.push(allData[i]);
 
                 }
 
