@@ -7,6 +7,11 @@ const stream = require('stream');
 const {promisify} = require('util');
 const pipeline = promisify(stream.pipeline);
 const convertJsonToCsv = require('./convertJsonToCsv');
+
+// Maximum number of login attempts
+const MAX_LOGIN_ATTEMPTS = 3;
+const RETRY_DELAY = 5000; // 5 seconds
+
 const ensureDirectoryExistence = (filePath) => {
     const dirname = path.dirname(filePath);
     if (fs.existsSync(dirname)) {
@@ -32,150 +37,191 @@ function touch(filename) {
     }
 }
 
+async function attemptLogin(page, username, password, attempt = 1) {
+    console.log(`Login attempt ${attempt} of ${MAX_LOGIN_ATTEMPTS}...`);
+    
+    try {
+        // Fill in credentials
+        console.log('Entering username...');
+        await page.type('#username', username.toString());
+        
+        console.log('Entering password...');
+        await page.type('#password', password.toString());
+        
+        // Handle CAPTCHA
+        console.log('Processing CAPTCHA...');
+        await new Promise(async (resolve) => {
+            try {
+                await page.waitForSelector('.aiowps-captcha-equation');
+                console.log('CAPTCHA element found');
+                
+                const captchaText = await page.$eval('.aiowps-captcha-equation strong', el => el.textContent);
+                console.log('CAPTCHA equation found:', captchaText);
+                
+                const equation = captchaText.split('=')[0].trim();
+                
+                const wordToNumber = {
+                    'zero': 0, 'one': 1, 'two': 2, 'three': 3, 'four': 4,
+                    'five': 5, 'six': 6, 'seven': 7, 'eight': 8, 'nine': 9,
+                    'ten': 10, 'eleven': 11, 'twelve': 12, 'thirteen': 13,
+                    'fourteen': 14, 'fifteen': 15, 'sixteen': 16,
+                    'seventeen': 17, 'eighteen': 18, 'nineteen': 19, 'twenty': 20
+                };
+
+                const parts = equation.toLowerCase().split(/\s+/);
+                console.log('Parsed equation parts:', parts);
+                
+                const num1 = wordToNumber[parts[0]] || parseInt(parts[0]);
+                const operator = parts[1];
+                const num2 = wordToNumber[parts[2]] || parseInt(parts[2]);
+                
+                let result;
+                switch(operator) {
+                    case '+':
+                    case 'plus':
+                        result = num1 + num2;
+                        break;
+                    case '-':
+                    case '−':
+                    case 'minus':
+                        result = num1 - num2;
+                        break;
+                    case '×':
+                    case '*':
+                    case 'times':
+                        result = num1 * num2;
+                        break;
+                    default:
+                        throw new Error('Unknown operator: ' + operator);
+                }
+
+                console.log('Solved CAPTCHA:', equation, '=', result);
+                
+                const captchaInput = await page.$('.aiowps-captcha-answer');
+                await captchaInput.type(result.toString());
+                console.log('Entered CAPTCHA solution');
+                
+                resolve();
+            } catch (error) {
+                console.error('CAPTCHA handling error:', error);
+                resolve();
+            }
+        });
+
+        // Click login button and wait for navigation
+        console.log('Submitting login form...');
+        await Promise.all([
+            page.waitForNavigation(),
+            page.click('.button.woocommerce-button.woocommerce-form-login__submit'),
+        ]);
+
+        // Check if login was successful by looking for a success indicator
+        const isLoggedIn = await page.evaluate(() => {
+            return !document.querySelector('.woocommerce-error');
+        });
+
+        if (isLoggedIn) {
+            console.log('Login successful!');
+            return true;
+        } else {
+            console.log('Login failed - error message present');
+            throw new Error('Login failed');
+        }
+    } catch (error) {
+        console.error(`Login attempt ${attempt} failed:`, error.message);
+        
+        if (attempt < MAX_LOGIN_ATTEMPTS) {
+            console.log(`Waiting ${RETRY_DELAY/1000} seconds before next attempt...`);
+            await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+            return attemptLogin(page, username, password, attempt + 1);
+        } else {
+            throw new Error(`Failed to login after ${MAX_LOGIN_ATTEMPTS} attempts`);
+        }
+    }
+}
+
 const scheduledTask = async (date = new Date()) => {
+    console.log('Starting scheduled task...');
+    console.log('Target date:', date);
+    
     const dbPath = path.join(__dirname, 'files.json');
     ensureDirectoryExistence(dbPath);
     const db = new JSONdb(dbPath);
     db.JSON({});
     let list = [];
     let error = [];
+
     try {
-        // Launch Puppeteer browser
-        console.log('Launching Puppeteer browser...');
+        console.log('Launching browser...');
         const browser = await puppeteer.launch({
             headless: true
         });
+
         if (!fs.existsSync('./public/downloads/')) {
+            console.log('Creating downloads directory...');
             fs.mkdirSync('./public/downloads/', {recursive: true});
             touch('index.html');
         }
-        // Create a new page
+
         const page = await browser.newPage();
         page.setDefaultTimeout(0);
 
         try {
-            // Go to the login page
-            console.log('Going to the login page...');
+            console.log('Navigating to login page...');
             await page.goto('https://www.realgpl.com/my-account/');
 
-
-
             try {
-                //consent label
+                console.log('Handling consent popup if present...');
                 await Promise.all([
                     page.click('.fc-button-label'),
                 ]);
+                console.log('Consent popup handled');
             } catch (error) {
-                console.log('No Consent block')
+                console.log('No consent popup found');
             }
 
-
-
-            var username =  process.env.USERNAME;
-            var password = process.env.PASSWORD;
-            // Fill in the login credentials
-            console.log('Typing username...');
-
-            await page.type('#username',username.toString());
-
-            console.log('Typing password...');
-            await page.type('#password',password.toString());
-
-            // Handle CAPTCHA
-            await new Promise(async (resolve) => {
-                try {
-                    // Wait for CAPTCHA element to be present
-                    await page.waitForSelector('.aiowps-captcha-equation');
-                    
-                    // Get the CAPTCHA equation text
-                    const captchaText = await page.$eval('.aiowps-captcha-equation strong', el => el.textContent);
-                    
-                    // Extract the equation parts (e.g., "nineteen − ten = ")
-                    const equation = captchaText.split('=')[0].trim();
-                    
-                    // Convert word numbers to digits and evaluate
-                    const wordToNumber = {
-                        'zero': 0, 'one': 1, 'two': 2, 'three': 3, 'four': 4,
-                        'five': 5, 'six': 6, 'seven': 7, 'eight': 8, 'nine': 9,
-                        'ten': 10, 'eleven': 11, 'twelve': 12, 'thirteen': 13,
-                        'fourteen': 14, 'fifteen': 15, 'sixteen': 16,
-                        'seventeen': 17, 'eighteen': 18, 'nineteen': 19, 'twenty': 20
-                    };
-
-                    // Split equation into parts
-                    const parts = equation.toLowerCase().split(/\s+/);
-                    
-                    // Convert words to numbers
-                    const num1 = wordToNumber[parts[0]] || parseInt(parts[0]);
-                    const operator = parts[1];
-                    const num2 = wordToNumber[parts[2]] || parseInt(parts[2]);
-                    
-                    // Calculate result
-                    let result;
-                    switch(operator) {
-                        case '+':
-                        case 'plus':
-                            result = num1 + num2;
-                            break;
-                        case '-':
-                        case '−': // This is an en dash
-                        case 'minus':
-                            result = num1 - num2;
-                            break;
-                        case '×':
-                        case '*':
-                        case 'times':
-                            result = num1 * num2;
-                            break;
-                        default:
-                            throw new Error('Unknown operator: ' + operator);
-                    }
-
-                    console.log('CAPTCHA equation:', equation, '=', result);
-                    
-                    // Get the CAPTCHA answer input field and enter result
-                    const captchaInput = await page.$('.aiowps-captcha-answer');
-                    await captchaInput.type(result.toString());
-                    
-                    resolve();
-                } catch (error) {
-                    console.log('CAPTCHA handling error:', error);
-                    resolve(); // Resolve anyway to continue with login
-                }
-            });
-
-            console.log('Clicking the login button...');
-               await Promise.all([
-                   page.waitForNavigation(),
-                   page.click('.button.woocommerce-button.woocommerce-form-login__submit'),
-               ]);
-
+            const username = process.env.USERNAME;
+            const password = process.env.PASSWORD;
+            
+            // Attempt login with retry logic
+            await attemptLogin(page, username, password);
 
             // Go to the changelog page
             console.log('Going to the changelog page...');
-            await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=10');
-                console.log(date)
+            await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=250');
+            
             console.log('Changelog page...');
-
 
             var theDate = new Date(date).toLocaleDateString('en-US', {
                 year: 'numeric',
                 month: 'long',
                 day: 'numeric',
             });
-            console.log(theDate);
+            console.log('Processing date:', theDate);
             const data = await page.evaluate((theDate) => {
                 const rows = document.querySelectorAll('tr.awcpt-row');
                 const rowDataArray = [];
 
                 for (const row of rows) {
                     var date = row.querySelector('.awcpt-date').innerText;
-                    // This determanice date of the update
+                    // This determines date of the update
                     if (theDate === date) {
                         try {
                             const id = row.getAttribute('data-id');
                             const productName = row.querySelector('.awcpt-title').innerText;
-                            const downloadLink = row.querySelector('.awcpt-shortcode-wrap a').getAttribute('href');
+                            
+                            // Get download link if available
+                            let downloadLink = null;
+                            let isLocked = false;
+                            const downloadButton = row.querySelector('.awcpt-shortcode-wrap a');
+                            if (downloadButton) {
+                                downloadLink = downloadButton.getAttribute('href');
+                                isLocked = downloadButton.classList.contains('locked');
+                                console.log(`Found ${isLocked ? 'locked' : 'unlocked'} download button for: ${productName}`);
+                            } else {
+                                console.log(`No download button found for: ${productName}`);
+                            }
+                            
                             const productURL = row.querySelector('.awcpt-prdTitle-col a').getAttribute('href');
 
                             // Create an object with the extracted data for each row
@@ -184,120 +230,96 @@ const scheduledTask = async (date = new Date()) => {
                                 productName,
                                 date,
                                 downloadLink,
-                                productURL, // Add the product URL to the object
+                                productURL,
+                                isLocked
                             };
 
-                            rowDataArray.push(rowData); }
-                        catch (e) {
-                            console.error(e);
+                            if (downloadLink && !isLocked) {
+                                rowDataArray.push(rowData);
+                            } else {
+                                console.log(`Skipping ${isLocked ? 'locked' : 'missing download link for'}: ${productName}`);
+                            }
+                        } catch (e) {
+                            console.error('Error processing row:', e);
                         }
                     }
-
                 }
                 return rowDataArray;
             }, theDate);
 
-            console.log('Changelog entries for ', theDate);
-            console.log(data);
-
-            // Process each title and extract relevant information
-            for (let i = 0; i < data.length; i++) {
-                let text = data[i].productName;
-
-                // Extract version
-                if (/\d/.test(text)) {
-                    let url = '';
-                    let versionWithoutV = '';
-                    let textWithoutVersion = '';
-                    let slug = '';
-                    let productId = '';
-                    try {
-                        let version = text.match(/v\d+(\.\d+){0,3}/)[0];
-
-                        // Remove 'v' from version
-                        versionWithoutV = version.replace('v', '');
-                        // Remove version from title
-                        textWithoutVersion = text.replace(/ v\d+(\.\d+){0,3}/, '');
-
-                    } catch (e) {
-                        console.log(e);
-                    }
-                    url = data[i].productURL;
-                    try {
-
-                        let parsedUrl = new URL(url);
-                        url = url.replace(/^\/|\/$/g, '');
-
-                        // Get the last part of the URL after the last slash
-                        let parts = url.split('/');
-                        slug = parts[parts.length - 1];// Extract the slug from the URL
-                        productId = parsedUrl.searchParams.get("product_id");
-                    } catch (e) {
-                        console.log(e);
-                    }// Get the product_id parameter value
-                    data[i].version = versionWithoutV;
-                    data[i].name = textWithoutVersion;
-                    data[i].slug = slug;
-                    data[i].filename = '';
-                    data[i].filePath = '';
-                    data[i].productId = productId;
-
-                }
-            }
-            console.log('Data processing completed.');
-
+            console.log(`Found ${data.length} downloadable items for ${theDate}`);
+            
             // Process each title and download the files
             let fileCounter = 0;
             let errorCounter = 0;
+            
             for (let i = 0; i < data.length; i++) {
-                console.log(`Starting download for file ${i + 1} of ${data.length}...`);
+                const item = data[i];
+                console.log(`\nProcessing download ${i + 1}/${data.length}: ${item.productName}`);
+                
                 try {
+                    if (!item.downloadLink) {
+                        console.log('No download link available, skipping...');
+                        continue;
+                    }
+
+                    if (item.isLocked) {
+                        console.log('Item is locked (requires credits), skipping...');
+                        continue;
+                    }
+
                     // Get cookies from Puppeteer
                     const cookies = await page.cookies();
+                    console.log('Got session cookies');
 
                     // Format cookies for axios
                     const formattedCookies = cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
 
                     // Use axios to download the file
+                    console.log('Starting download from:', item.downloadLink);
                     const response = await axios({
-                        url: data[i].downloadLink,
+                        url: item.downloadLink,
                         method: 'GET',
                         responseType: 'stream',
                         headers: {
                             Cookie: formattedCookies
                         }
                     });
+
                     // Extract the filename from the URL
-                    var modifiedString = data[i].slug.replace(/-download$/, "");
-                    modifiedString = data[i].slug.replace(/download-/, "");
+                    var modifiedString = item.slug?.replace(/-download$/, "") || 
+                                      item.productName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+                    modifiedString = modifiedString.replace(/download-/, "");
                     var filename = `${modifiedString}.zip`;
 
                     // Set the file path
                     const filePath = path.join('./public/downloads/', filename);
+                    console.log('Saving to:', filePath);
                     touch(filePath);
+
                     // Download the file and save it to the specified path
                     await pipeline(response.data, fs.createWriteStream(filePath));
 
-                    // Update the titles array with the filename and file path
+                    // Update the data array with the filename and file path
                     data[i].filename = filename;
                     data[i].filePath = filePath;
-
                     data[i].fileUrl = path.join(process.env.DOWNLOAD_URL, filename);
-                    console.log('Download Successful: ', data[i].productName)
+                    
+                    console.log('Download successful:', item.productName);
                     fileCounter++;
                     list.push(data[i]);
                 } catch (e) {
                     errorCounter++;
-                    console.error(`Failed to download from link: ${data[i].downloadLink}`);
-                    console.error(e);
+                    console.error(`Failed to download: ${item.productName}`);
+                    console.error('Error:', e.message);
                     error.push(data[i]);
-
                 }
-
             }
 
-            console.log('Downloaded files:', fileCounter);
-            console.log('Errors:', errorCounter);
+            console.log('\nDownload Summary:');
+            console.log(`Successfully downloaded: ${fileCounter} files`);
+            console.log(`Failed downloads: ${errorCounter}`);
+
             // Close the Puppeteer browser
             await browser.close();
 
