@@ -194,43 +194,66 @@ async function handleLogin(page) {
  * @returns {Promise<Array>} - Array of changelog entries
  */
 async function scrapeChangelogPage(page, theDate, pageNum) {
+    const startTime = Date.now();
     console.log(`Scraping changelog page ${pageNum}...`);
     const url = `https://www.realgpl.com/changelog/?99936_results_per_page=250&99936_paged=${pageNum}`;
     
-    await page.goto(url);
-    console.log(`Navigated to page ${pageNum}`);
+    // Calculate progressive timeout based on page number
+    const baseTimeout = 120000;
+    const progressiveTimeout = baseTimeout * (pageNum > 1 ? 1.5 : 1);
+    console.log(`Using progressive timeout of ${progressiveTimeout}ms for page ${pageNum}`);
     
-    const data = await page.evaluate((theDate) => {
-        const rows = document.querySelectorAll('tr.awcpt-row');
-        const rowDataArray = [];
-        console.log(`Found ${rows.length} rows on page`);
+    try {
+        // Increase timeout for page navigation
+        await page.goto(url, {
+            waitUntil: ['networkidle0', 'domcontentloaded', 'load'],
+            timeout: progressiveTimeout
+        });
+        console.log(`Navigation completed in ${Date.now() - startTime}ms`);
+        
+        // Add wait for page to be fully loaded
+        console.log('Waiting for page to be fully loaded...');
+        await page.waitForFunction(() => {
+            return document.readyState === 'complete' && 
+                   !document.querySelector('.loading');
+        }, { timeout: progressiveTimeout });
+        console.log(`Page fully loaded in ${Date.now() - startTime}ms`);
+        
+        const data = await page.evaluate((theDate) => {
+            const rows = document.querySelectorAll('tr.awcpt-row');
+            const rowDataArray = [];
+            console.log(`Found ${rows.length} rows on page`);
 
-        for (const row of rows) {
-            var date = row.querySelector('.awcpt-date').innerText;
-            if (theDate === date) {
-                try {
-                    const id = row.getAttribute('data-id');
-                    const productName = row.querySelector('.awcpt-title').innerText;
-                    const downloadLink = row.querySelector('.awcpt-shortcode-wrap a').getAttribute('href');
-                    const productURL = row.querySelector('.awcpt-prdTitle-col a').getAttribute('href');
+            for (const row of rows) {
+                var date = row.querySelector('.awcpt-date').innerText;
+                if (theDate === date) {
+                    try {
+                        const id = row.getAttribute('data-id');
+                        const productName = row.querySelector('.awcpt-title').innerText;
+                        const downloadLink = row.querySelector('.awcpt-shortcode-wrap a').getAttribute('href');
+                        const productURL = row.querySelector('.awcpt-prdTitle-col a').getAttribute('href');
 
-                    rowDataArray.push({
-                        id,
-                        productName,
-                        date,
-                        downloadLink,
-                        productURL,
-                    });
-                } catch (e) {
-                    console.error('Error processing row:', e);
+                        rowDataArray.push({
+                            id,
+                            productName,
+                            date,
+                            downloadLink,
+                            productURL,
+                        });
+                    } catch (e) {
+                        console.error('Error processing row:', e);
+                    }
                 }
             }
-        }
-        return rowDataArray;
-    }, theDate);
+            return rowDataArray;
+        }, theDate);
 
-    console.log(`Found ${data.length} matching entries on page ${pageNum}`);
-    return data;
+        console.log(`Found ${data.length} matching entries on page ${pageNum}`);
+        return data;
+    } catch (error) {
+        console.error(`Error scraping changelog page ${pageNum}:`, error.message);
+        return [];
+    }
 }
 
 const scheduledTask = async (date = new Date()) => {
@@ -262,7 +285,7 @@ const scheduledTask = async (date = new Date()) => {
 
         // Create new page with longer timeout
         const page = await browser.newPage();
-        page.setDefaultTimeout(60000);
+        page.setDefaultTimeout(120000);  // Increase default timeout to 120 seconds
         
         // Set a reasonable viewport
         await page.setViewport({ width: 1280, height: 800 });
@@ -362,50 +385,72 @@ const scheduledTask = async (date = new Date()) => {
         let fileCounter = 0;
         let errorCounter = 0;
         for (let i = 0; i < allData.length; i++) {
+            const downloadStartTime = Date.now();
             console.log(`Starting download for file ${i + 1} of ${allData.length}...`);
-            try {
-                // Get cookies from Puppeteer
-                const cookies = await page.cookies();
+            
+            // Calculate progressive timeout based on retry attempts
+            const baseDownloadTimeout = 120000;
+            let currentRetry = 0;
+            const maxRetries = 3;
+            
+            while (currentRetry < maxRetries) {
+                try {
+                    const progressiveDownloadTimeout = baseDownloadTimeout * (1 + currentRetry * 0.5);
+                    console.log(`Attempt ${currentRetry + 1} with timeout ${progressiveDownloadTimeout}ms`);
+                    
+                    // Get cookies from Puppeteer
+                    const cookies = await page.cookies();
+                    const formattedCookies = cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
 
-                // Format cookies for axios
-                const formattedCookies = cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
+                    // Use axios to download the file with progressive timeout
+                    const response = await axios({
+                        url: allData[i].downloadLink,
+                        method: 'GET',
+                        responseType: 'stream',
+                        headers: {
+                            Cookie: formattedCookies
+                        },
+                        timeout: progressiveDownloadTimeout
+                    });
 
-                // Use axios to download the file
-                const response = await axios({
-                    url: allData[i].downloadLink,
-                    method: 'GET',
-                    responseType: 'stream',
-                    headers: {
-                        Cookie: formattedCookies
+                    // Extract the filename from the URL
+                    var modifiedString = allData[i].slug.replace(/-download$/, "");
+                    modifiedString = allData[i].slug.replace(/download-/, "");
+                    var filename = `${modifiedString}.zip`;
+
+                    // Set the file path
+                    const filePath = path.join('./public/downloads/', filename);
+                    touch(filePath);
+                    
+                    // Download the file and save it to the specified path
+                    await pipeline(response.data, fs.createWriteStream(filePath));
+
+                    console.log(`Download completed in ${Date.now() - downloadStartTime}ms`);
+                    
+                    // Update the titles array with the filename and file path
+                    allData[i].filename = filename;
+                    allData[i].filePath = filePath;
+                    allData[i].fileUrl = path.join(process.env.DOWNLOAD_URL, filename);
+                    console.log('Download Successful: ', allData[i].productName);
+                    fileCounter++;
+                    list.push(allData[i]);
+                    break; // Success, exit retry loop
+                    
+                } catch (e) {
+                    currentRetry++;
+                    console.error(`Download attempt ${currentRetry} failed after ${Date.now() - downloadStartTime}ms`);
+                    console.error(`Error: ${e.message}`);
+                    
+                    if (currentRetry === maxRetries) {
+                        errorCounter++;
+                        console.error(`All ${maxRetries} download attempts failed for: ${allData[i].downloadLink}`);
+                        error.push(allData[i]);
+                    } else {
+                        console.log(`Waiting ${currentRetry * 5000}ms before next attempt...`);
+                        await new Promise(resolve => setTimeout(resolve, currentRetry * 5000));
                     }
-                });
-                // Extract the filename from the URL
-                var modifiedString = allData[i].slug.replace(/-download$/, "");
-                modifiedString = allData[i].slug.replace(/download-/, "");
-                var filename = `${modifiedString}.zip`;
-
-                // Set the file path
-                const filePath = path.join('./public/downloads/', filename);
-                touch(filePath);
-                // Download the file and save it to the specified path
-                await pipeline(response.data, fs.createWriteStream(filePath));
-
-                // Update the titles array with the filename and file path
-                allData[i].filename = filename;
-                allData[i].filePath = filePath;
-
-                allData[i].fileUrl = path.join(process.env.DOWNLOAD_URL, filename);
-                console.log('Download Successful: ', allData[i].productName)
-                fileCounter++;
-                list.push(allData[i]);
-            } catch (e) {
-                errorCounter++;
-                console.error(`Failed to download from link: ${allData[i].downloadLink}`);
-                console.error(e);
-                error.push(allData[i]);
-
+                }
             }
-
         }
 
         console.log('Downloaded files:', fileCounter);
