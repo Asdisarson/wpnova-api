@@ -8,23 +8,20 @@ const {promisify} = require('util');
 const pipeline = promisify(stream.pipeline);
 const convertJsonToCsv = require('./convertJsonToCsv');
 const { extractAndSolveCaptcha } = require('./captcha');
+
+// Utility functions
 const ensureDirectoryExistence = (filePath) => {
     const dirname = path.dirname(filePath);
-    if (fs.existsSync(dirname)) {
-        return true;
-    }
+    if (fs.existsSync(dirname)) return true;
     ensureDirectoryExistence(dirname);
     fs.mkdirSync(dirname);
-}
+};
 
 function touch(filename) {
     try {
-        // Check if file exists
         if (!fs.existsSync(filename)) {
-            // If not, create an empty file
             fs.writeFileSync(filename, '');
         } else {
-            // If it does, update its modification time
             const currentTime = new Date();
             fs.utimesSync(filename, currentTime, currentTime);
         }
@@ -37,15 +34,15 @@ const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
  * Handles the login process with retries
- * @param {Page} page - Puppeteer page object
+ * @param {import('puppeteer').Page} page - Puppeteer page object
  * @returns {Promise<boolean>} - True if login successful
  */
 async function handleLogin(page) {
     console.log('Starting login process...');
     
-    // Go to the login page with full load waiting
-    console.log('Navigating to login page...');
     try {
+        // Go to the login page with full load waiting
+        console.log('Navigating to login page...');
         await page.goto('https://www.realgpl.com/my-account/', {
             waitUntil: ['networkidle0', 'domcontentloaded', 'load'],
             timeout: 120000
@@ -75,9 +72,7 @@ async function handleLogin(page) {
             if (consentButton) {
                 console.log('Handling consent popup...');
                 await consentButton.click();
-                // Wait for consent animation to complete
                 await delay(2500);
-                // Wait for any overlay to disappear
                 await page.waitForFunction(() => {
                     const overlay = document.querySelector('.fc-consent-overlay');
                     return !overlay || overlay.style.display === 'none';
@@ -92,7 +87,6 @@ async function handleLogin(page) {
             console.log(`\nLogin attempt ${attempt} of 3`);
             
             try {
-                // Clear any existing input before retry
                 if (attempt > 1) {
                     console.log('Clearing previous input and reloading...');
                     await page.evaluate(() => {
@@ -102,33 +96,28 @@ async function handleLogin(page) {
                         if (captchaInput) captchaInput.value = '';
                     });
                     
-                    // Reload and wait for everything to be ready again
                     await page.reload({ 
                         waitUntil: ['networkidle0', 'domcontentloaded', 'load'],
-                        timeout: 30000 
+                        timeout: 60000 
                     });
                     
-                    // Wait for form elements to be interactive again
                     await Promise.all([
-                        page.waitForSelector('#username', { visible: true, timeout: 30000 }),
-                        page.waitForSelector('#password', { visible: true, timeout: 30000 }),
-                        page.waitForSelector('.aiowps-captcha-equation', { visible: true, timeout: 30000 })
+                        page.waitForSelector('#username', { visible: true, timeout: 60000 }),
+                        page.waitForSelector('#password', { visible: true, timeout: 60000 }),
+                        page.waitForSelector('.aiowps-captcha-equation', { visible: true, timeout: 60000 })
                     ]);
                     
-                    await delay(3000); // Additional stability wait
+                    await delay(3000);
                 }
                 
-                // Get and log the current captcha equation before solving
-                const captchaElement = await page.$('.aiowps-captcha-equation strong');
-                if (captchaElement) {
-                    const captchaText = await page.evaluate(el => el.textContent, captchaElement);
-                    console.log('Current captcha:', captchaText.trim());
-                }
+                // Get and solve captcha
+                const captchaText = await page.$eval('.aiowps-captcha-equation strong', el => el.textContent);
+                console.log('Current captcha:', captchaText.trim());
                 
-                // Fill in credentials with proper typing simulation
+                // Fill in credentials
                 console.log('Entering credentials...');
-                await page.type('#username', process.env.USERNAME, { delay: 100 });
-                await page.type('#password', process.env.PASSWORD, { delay: 100 });
+                await page.type('#username', process.env.USERNAME);
+                await page.type('#password', process.env.PASSWORD);
                 
                 // Handle captcha
                 console.log('Solving captcha...');
@@ -137,7 +126,7 @@ async function handleLogin(page) {
                 console.log('Captcha equation:', captchaSolution.equation);
                 console.log('Captcha answer:', captchaSolution.answer);
                 
-                await page.type('.aiowps-captcha-answer', captchaSolution.answer.toString(), { delay: 100 });
+                await page.type('.aiowps-captcha-answer', captchaSolution.answer.toString());
                 
                 // Submit form and wait for navigation
                 console.log('Submitting login form...');
@@ -149,13 +138,12 @@ async function handleLogin(page) {
                     page.click('.woocommerce-form-login__submit')
                 ]);
                 
-                // Wait for post-login page to be fully loaded
                 await delay(4000);
                 
                 // Verify login success
                 const errorMessage = await page.$('.woocommerce-error');
                 if (errorMessage) {
-                    const error = await page.evaluate(el => el.textContent, errorMessage);
+                    const error = await page.$eval('.woocommerce-error', el => el.textContent);
                     console.log('Login failed:', error.trim());
                     if (attempt < 3) await delay(5000);
                     continue;
@@ -190,7 +178,7 @@ async function handleLogin(page) {
 
 /**
  * Scrapes changelog data from a specific page
- * @param {Page} page - Puppeteer page object
+ * @param {import('puppeteer').Page} page - Puppeteer page object
  * @param {string} theDate - Target date string
  * @param {number} pageNum - Page number to scrape
  * @returns {Promise<Array>} - Array of changelog entries
@@ -200,21 +188,17 @@ async function scrapeChangelogPage(page, theDate, pageNum) {
     console.log(`Scraping changelog page ${pageNum}...`);
     const url = `https://www.realgpl.com/changelog/?99936_results_per_page=50&99936_paged=${pageNum}`;
     
-    // Calculate progressive timeout based on page number but with lower base due to fewer items
-    const baseTimeout = 60000; // Reduced from 120000 since we're fetching fewer items
+    const baseTimeout = 60000;
     const progressiveTimeout = baseTimeout * (1 + (pageNum > 1 ? Math.min(pageNum * 0.2, 1) : 0));
     console.log(`Using progressive timeout of ${progressiveTimeout}ms for page ${pageNum}`);
     
     try {
-        // Increase timeout for page navigation
         await page.goto(url, {
             waitUntil: ['networkidle0', 'domcontentloaded', 'load'],
             timeout: progressiveTimeout
         });
         console.log(`Navigation completed in ${Date.now() - startTime}ms`);
         
-        // Add wait for page to be fully loaded
-        console.log('Waiting for page to be fully loaded...');
         await page.waitForFunction(() => {
             return document.readyState === 'complete' && 
                    !document.querySelector('.loading');
@@ -227,20 +211,15 @@ async function scrapeChangelogPage(page, theDate, pageNum) {
             console.log(`Found ${rows.length} rows on page`);
 
             for (const row of rows) {
-                var date = row.querySelector('.awcpt-date').innerText;
-                if (theDate === date) {
+                const date = row.querySelector('.awcpt-date')?.innerText;
+                if (date === theDate) {
                     try {
-                        const id = row.getAttribute('data-id');
-                        const productName = row.querySelector('.awcpt-title').innerText;
-                        const downloadLink = row.querySelector('.awcpt-shortcode-wrap a').getAttribute('href');
-                        const productURL = row.querySelector('.awcpt-prdTitle-col a').getAttribute('href');
-
                         rowDataArray.push({
-                            id,
-                            productName,
+                            id: row.getAttribute('data-id'),
+                            productName: row.querySelector('.awcpt-title')?.innerText,
                             date,
-                            downloadLink,
-                            productURL,
+                            downloadLink: row.querySelector('.awcpt-shortcode-wrap a')?.getAttribute('href'),
+                            productURL: row.querySelector('.awcpt-prdTitle-col a')?.getAttribute('href'),
                         });
                     } catch (e) {
                         console.error('Error processing row:', e);
@@ -266,47 +245,43 @@ const scheduledTask = async (date = new Date()) => {
     let list = [];
     let error = [];
 
-    // Calculate days difference
     const today = new Date();
     const daysDiff = Math.floor((today - date) / (1000 * 60 * 60 * 24));
     console.log(`Searching for updates from ${daysDiff} days ago`);
 
     try {
-        // Launch browser with specific options
         console.log('Launching browser...');
         const browser = await puppeteer.launch({
-            headless: true,
+            headless: "new",  // Using new headless mode
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
                 '--disable-dev-shm-usage',
                 '--disable-accelerated-2d-canvas',
-                '--disable-gpu'
-            ]
+                '--disable-gpu',
+                '--window-size=1280,800'
+            ],
+            defaultViewport: {
+                width: 1280,
+                height: 800
+            }
         });
 
-        // Create new page with longer timeout
         const page = await browser.newPage();
-        page.setDefaultTimeout(120000);  // Increase default timeout to 120 seconds
+        page.setDefaultNavigationTimeout(120000);
         
-        // Set a reasonable viewport
-        await page.setViewport({ width: 1280, height: 800 });
-
-        // Attempt login
         const loginSuccess = await handleLogin(page);
         if (!loginSuccess) {
             throw new Error('Failed to login after multiple attempts');
         }
 
-        // Changelog scraping with pagination
         console.log('Starting changelog scraping...');
         let allData = [];
         let currentPage = 1;
-        // Increase max pages but with fewer items per page
-        let maxPages = daysDiff > 3 ? 10 : 5; // Increased from 2/1 to 10/5
+        let maxPages = daysDiff > 3 ? 10 : 5;
         let foundEntries = false;
         let consecutiveEmptyPages = 0;
-        const MAX_EMPTY_PAGES = 3; // Stop after 3 consecutive empty pages
+        const MAX_EMPTY_PAGES = 3;
 
         const theDate = new Date(date).toLocaleDateString('en-US', {
             year: 'numeric',
@@ -323,7 +298,7 @@ const scheduledTask = async (date = new Date()) => {
                 console.log(`Found ${pageData.length} entries on page ${currentPage}`);
                 allData = allData.concat(pageData);
                 foundEntries = true;
-                consecutiveEmptyPages = 0; // Reset counter when we find entries
+                consecutiveEmptyPages = 0;
             } else {
                 consecutiveEmptyPages++;
                 console.log(`No entries found on page ${currentPage}. Empty pages in a row: ${consecutiveEmptyPages}`);
@@ -336,7 +311,7 @@ const scheduledTask = async (date = new Date()) => {
             
             currentPage++;
             if (currentPage <= maxPages) {
-                const waitTime = 3000 + (currentPage > 5 ? 2000 : 0); // Progressive wait time
+                const waitTime = 3000 + (currentPage > 5 ? 2000 : 0);
                 console.log(`Waiting ${waitTime}ms before next page...`);
                 await delay(waitTime);
             }
@@ -344,60 +319,40 @@ const scheduledTask = async (date = new Date()) => {
 
         console.log(`Total entries found: ${allData.length} across ${currentPage - 1} pages`);
         
-        // Process the found entries
-        for (let i = 0; i < allData.length; i++) {
-            let text = allData[i].productName;
-
-            // Extract version
-            if (/\d/.test(text)) {
-                let url = '';
-                let versionWithoutV = '';
-                let textWithoutVersion = '';
-                let slug = '';
-                let productId = '';
+        // Process entries
+        for (const item of allData) {
+            if (/\d/.test(item.productName)) {
                 try {
-                    let version = text.match(/v\d+(\.\d+){0,3}/)[0];
+                    const version = item.productName.match(/v\d+(\.\d+){0,3}/)?.[0] || '';
+                    const versionWithoutV = version.replace('v', '');
+                    const textWithoutVersion = item.productName.replace(/ v\d+(\.\d+){0,3}/, '');
+                    
+                    const parsedUrl = new URL(item.productURL);
+                    const url = item.productURL.replace(/^\/|\/$/g, '');
+                    const parts = url.split('/');
+                    const slug = parts[parts.length - 1];
+                    const productId = parsedUrl.searchParams.get("product_id");
 
-                    // Remove 'v' from version
-                    versionWithoutV = version.replace('v', '');
-                    // Remove version from title
-                    textWithoutVersion = text.replace(/ v\d+(\.\d+){0,3}/, '');
-
+                    item.version = versionWithoutV;
+                    item.name = textWithoutVersion;
+                    item.slug = slug;
+                    item.filename = '';
+                    item.filePath = '';
+                    item.productId = productId;
                 } catch (e) {
-                    console.log(e);
+                    console.error('Error processing item:', e);
                 }
-                url = allData[i].productURL;
-                try {
-
-                    let parsedUrl = new URL(url);
-                    url = url.replace(/^\/|\/$/g, '');
-
-                    // Get the last part of the URL after the last slash
-                    let parts = url.split('/');
-                    slug = parts[parts.length - 1];// Extract the slug from the URL
-                    productId = parsedUrl.searchParams.get("product_id");
-                } catch (e) {
-                    console.log(e);
-                }// Get the product_id parameter value
-                allData[i].version = versionWithoutV;
-                allData[i].name = textWithoutVersion;
-                allData[i].slug = slug;
-                allData[i].filename = '';
-                allData[i].filePath = '';
-                allData[i].productId = productId;
-
             }
         }
         console.log('Data processing completed.');
 
-        // Process each title and download the files
+        // Download files
         let fileCounter = 0;
         let errorCounter = 0;
-        for (let i = 0; i < allData.length; i++) {
+        for (const item of allData) {
             const downloadStartTime = Date.now();
-            console.log(`Starting download for file ${i + 1} of ${allData.length}...`);
+            console.log(`Starting download for file ${fileCounter + 1} of ${allData.length}...`);
             
-            // Calculate progressive timeout based on retry attempts
             const baseDownloadTimeout = 120000;
             let currentRetry = 0;
             const maxRetries = 3;
@@ -407,13 +362,11 @@ const scheduledTask = async (date = new Date()) => {
                     const progressiveDownloadTimeout = baseDownloadTimeout * (1 + currentRetry * 0.5);
                     console.log(`Attempt ${currentRetry + 1} with timeout ${progressiveDownloadTimeout}ms`);
                     
-                    // Get cookies from Puppeteer
                     const cookies = await page.cookies();
                     const formattedCookies = cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
 
-                    // Use axios to download the file with progressive timeout
                     const response = await axios({
-                        url: allData[i].downloadLink,
+                        url: item.downloadLink,
                         method: 'GET',
                         responseType: 'stream',
                         headers: {
@@ -422,28 +375,22 @@ const scheduledTask = async (date = new Date()) => {
                         timeout: progressiveDownloadTimeout
                     });
 
-                    // Extract the filename from the URL
-                    var modifiedString = allData[i].slug.replace(/-download$/, "");
-                    modifiedString = allData[i].slug.replace(/download-/, "");
-                    var filename = `${modifiedString}.zip`;
-
-                    // Set the file path
+                    const modifiedString = item.slug.replace(/-download$/, "").replace(/download-/, "");
+                    const filename = `${modifiedString}.zip`;
                     const filePath = path.join('./public/downloads/', filename);
-                    touch(filePath);
                     
-                    // Download the file and save it to the specified path
+                    touch(filePath);
                     await pipeline(response.data, fs.createWriteStream(filePath));
 
                     console.log(`Download completed in ${Date.now() - downloadStartTime}ms`);
                     
-                    // Update the titles array with the filename and file path
-                    allData[i].filename = filename;
-                    allData[i].filePath = filePath;
-                    allData[i].fileUrl = path.join(process.env.DOWNLOAD_URL, filename);
-                    console.log('Download Successful: ', allData[i].productName);
+                    item.filename = filename;
+                    item.filePath = filePath;
+                    item.fileUrl = path.join(process.env.DOWNLOAD_URL, filename);
+                    console.log('Download Successful:', item.productName);
                     fileCounter++;
-                    list.push(allData[i]);
-                    break; // Success, exit retry loop
+                    list.push(item);
+                    break;
                     
                 } catch (e) {
                     currentRetry++;
@@ -452,8 +399,8 @@ const scheduledTask = async (date = new Date()) => {
                     
                     if (currentRetry === maxRetries) {
                         errorCounter++;
-                        console.error(`All ${maxRetries} download attempts failed for: ${allData[i].downloadLink}`);
-                        error.push(allData[i]);
+                        console.error(`All ${maxRetries} download attempts failed for: ${item.downloadLink}`);
+                        error.push(item);
                     } else {
                         const retryWaitTime = currentRetry * 5000;
                         console.log(`Waiting ${retryWaitTime}ms before next attempt...`);
@@ -465,49 +412,42 @@ const scheduledTask = async (date = new Date()) => {
 
         console.log('Downloaded files:', fileCounter);
         console.log('Errors:', errorCounter);
-        // Close the Puppeteer browser
         await browser.close();
-
         console.log('Browser closed.');
-        try{
-            touch('error.csv');
-            convertJsonToCsv(error, './public/error.csv', (err) => {
-                if (err) {
-                    console.error('Error:', err);
-                } else {
-                    console.log('CSV file has been saved.');
-                }
-            });
 
+        // Save results
+        try {
+            touch('error.csv');
+            await new Promise((resolve, reject) => {
+                convertJsonToCsv(error, './public/error.csv', (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                });
+            });
+            console.log('Error CSV saved');
+        } catch (err) {
+            console.error('Error saving error.csv:', err);
         }
-        catch (err) {
-            console.error('An error occurred:');
-            console.error(err);
-            return err;
-        }
-        try{
+
+        try {
             db.JSON(list);
             db.sync();
             touch('data.csv');
-            convertJsonToCsv(list, './public/data.csv', (err) => {
-                if (err) {
-                    console.error('Error:', err);
-                } else {
-                    console.log('CSV file has been saved.');
-                }
+            await new Promise((resolve, reject) => {
+                convertJsonToCsv(list, './public/data.csv', (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                });
             });
+            console.log('Data CSV saved');
+        } catch (err) {
+            console.error('Error saving data.csv:', err);
+        }
 
-        }
-        catch (err) {
-            console.error('An error occurred:');
-            console.error(err);
-            return err;
-        }
-        return list.length
+        return list.length;
 
     } catch (err) {
-        console.error('An error occurred:');
-        console.error(err);
+        console.error('An error occurred:', err);
         return err;
     }
 }

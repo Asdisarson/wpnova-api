@@ -19,7 +19,7 @@
     "node-fetch": "^3.3.2",
     "npm": "^10.8.1",
     "papaparse": "^5.4.1",
-    "puppeteer": "^22.11.2",
+    "puppeteer": "^24.2.1",
     "puppeteer-core": "^22.11.2",
     "simple-json-db": "^2.0.0",
     "uuid": "^10.0.0"
