@@ -80,7 +80,70 @@ const scheduledTask = async (date = new Date()) => {
 
             console.log('Typing password...');
             await page.type('#password',password.toString());
-            
+
+            // Handle CAPTCHA
+            await new Promise(async (resolve) => {
+                try {
+                    // Wait for CAPTCHA element to be present
+                    await page.waitForSelector('.aiowps-captcha-equation');
+                    
+                    // Get the CAPTCHA equation text
+                    const captchaText = await page.$eval('.aiowps-captcha-equation strong', el => el.textContent);
+                    
+                    // Extract the equation parts (e.g., "nineteen − ten = ")
+                    const equation = captchaText.split('=')[0].trim();
+                    
+                    // Convert word numbers to digits and evaluate
+                    const wordToNumber = {
+                        'zero': 0, 'one': 1, 'two': 2, 'three': 3, 'four': 4,
+                        'five': 5, 'six': 6, 'seven': 7, 'eight': 8, 'nine': 9,
+                        'ten': 10, 'eleven': 11, 'twelve': 12, 'thirteen': 13,
+                        'fourteen': 14, 'fifteen': 15, 'sixteen': 16,
+                        'seventeen': 17, 'eighteen': 18, 'nineteen': 19, 'twenty': 20
+                    };
+
+                    // Split equation into parts
+                    const parts = equation.toLowerCase().split(/\s+/);
+                    
+                    // Convert words to numbers
+                    const num1 = wordToNumber[parts[0]] || parseInt(parts[0]);
+                    const operator = parts[1];
+                    const num2 = wordToNumber[parts[2]] || parseInt(parts[2]);
+                    
+                    // Calculate result
+                    let result;
+                    switch(operator) {
+                        case '+':
+                        case 'plus':
+                            result = num1 + num2;
+                            break;
+                        case '-':
+                        case '−': // This is an en dash
+                        case 'minus':
+                            result = num1 - num2;
+                            break;
+                        case '×':
+                        case '*':
+                        case 'times':
+                            result = num1 * num2;
+                            break;
+                        default:
+                            throw new Error('Unknown operator: ' + operator);
+                    }
+
+                    console.log('CAPTCHA equation:', equation, '=', result);
+                    
+                    // Get the CAPTCHA answer input field and enter result
+                    const captchaInput = await page.$('.aiowps-captcha-answer');
+                    await captchaInput.type(result.toString());
+                    
+                    resolve();
+                } catch (error) {
+                    console.log('CAPTCHA handling error:', error);
+                    resolve(); // Resolve anyway to continue with login
+                }
+            });
+
             console.log('Clicking the login button...');
                await Promise.all([
                    page.waitForNavigation(),
