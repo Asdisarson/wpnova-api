@@ -338,7 +338,7 @@ const scheduledTask = async (date = new Date()) => {
             if (currentPage <= maxPages) {
                 const waitTime = 3000 + (currentPage > 5 ? 2000 : 0); // Progressive wait time
                 console.log(`Waiting ${waitTime}ms before next page...`);
-                await new Promise(resolve => setTimeout(resolve, waitTime));
+                await delay(waitTime);
             }
         }
 
@@ -455,8 +455,9 @@ const scheduledTask = async (date = new Date()) => {
                         console.error(`All ${maxRetries} download attempts failed for: ${allData[i].downloadLink}`);
                         error.push(allData[i]);
                     } else {
-                        console.log(`Waiting ${currentRetry * 5000}ms before next attempt...`);
-                        await new Promise(resolve => setTimeout(resolve, currentRetry * 5000));
+                        const retryWaitTime = currentRetry * 5000;
+                        console.log(`Waiting ${retryWaitTime}ms before next attempt...`);
+                        await delay(retryWaitTime);
                     }
                 }
             }
