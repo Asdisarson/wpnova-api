@@ -7,6 +7,7 @@ const stream = require('stream');
 const {promisify} = require('util');
 const pipeline = promisify(stream.pipeline);
 const convertJsonToCsv = require('./convertJsonToCsv');
+const { extractAndSolveCaptcha } = require('./captcha');
 const ensureDirectoryExistence = (filePath) => {
     const dirname = path.dirname(filePath);
     if (fs.existsSync(dirname)) {
@@ -29,6 +30,59 @@ function touch(filename) {
         }
     } catch (err) {
         console.error(`Error touching file ${filename}:`, err);
+    }
+}
+
+/**
+ * Attempts to login with captcha solving
+ * @param {Page} page - Puppeteer page object
+ * @returns {Promise<boolean>} - True if login successful, false otherwise
+ */
+async function attemptLogin(page) {
+    try {
+        var username = process.env.USERNAME;
+        var password = process.env.PASSWORD;
+        
+        // Fill in the login credentials
+        console.log('Typing username...');
+        await page.type('#username', username.toString());
+
+        console.log('Typing password...');
+        await page.type('#password', password.toString());
+
+        // Solve and fill in the captcha
+        console.log('Solving captcha...');
+        const html = await page.content();
+        const captchaSolution = extractAndSolveCaptcha(html);
+        console.log('Captcha equation:', captchaSolution.equation);
+        console.log('Captcha answer:', captchaSolution.answer);
+        await page.type('.aiowps-captcha-answer', captchaSolution.answer.toString());
+
+        console.log('Clicking the login button...');
+        await Promise.all([
+            page.waitForNavigation(),
+            page.click('.button.woocommerce-button.woocommerce-form-login__submit'),
+        ]);
+
+        // Check if login was successful by looking for error messages
+        const errorMessage = await page.$('.woocommerce-error');
+        if (errorMessage) {
+            console.log('Login failed - Error message found');
+            return false;
+        }
+
+        // Additional check - look for elements that should only be visible after login
+        const loggedInElement = await page.$('.woocommerce-MyAccount-navigation');
+        if (!loggedInElement) {
+            console.log('Login failed - Not on account page');
+            return false;
+        }
+
+        console.log('Login successful!');
+        return true;
+    } catch (error) {
+        console.error('Login attempt failed:', error);
+        return false;
     }
 }
 
@@ -58,8 +112,6 @@ const scheduledTask = async (date = new Date()) => {
             console.log('Going to the login page...');
             await page.goto('https://www.realgpl.com/my-account/');
 
-
-
             try {
                 //consent label
                 await Promise.all([
@@ -69,31 +121,41 @@ const scheduledTask = async (date = new Date()) => {
                 console.log('No Consent block')
             }
 
+            // Try login up to 3 times
+            let loginSuccess = false;
+            for (let attempt = 1; attempt <= 3; attempt++) {
+                console.log(`Login attempt ${attempt} of 3`);
+                
+                // Clear any existing input before retry
+                if (attempt > 1) {
+                    await page.evaluate(() => {
+                        document.querySelector('#username').value = '';
+                        document.querySelector('#password').value = '';
+                        document.querySelector('.aiowps-captcha-answer').value = '';
+                    });
+                    // Refresh the page to get a new captcha
+                    await page.reload();
+                }
 
+                loginSuccess = await attemptLogin(page);
+                if (loginSuccess) break;
+                
+                // Wait 2 seconds between attempts
+                if (!loginSuccess && attempt < 3) {
+                    console.log('Waiting before next attempt...');
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                }
+            }
 
-            var username =  process.env.USERNAME;
-            var password = process.env.PASSWORD;
-            // Fill in the login credentials
-            console.log('Typing username...');
-
-            await page.type('#username',username.toString());
-
-            console.log('Typing password...');
-            await page.type('#password',password.toString());
-
-            console.log('Clicking the login button...');
-               await Promise.all([
-                   page.waitForNavigation(),
-                   page.click('.button.woocommerce-button.woocommerce-form-login__submit'),
-               ]);
-
+            if (!loginSuccess) {
+                throw new Error('Failed to login after 3 attempts');
+            }
 
             // Go to the changelog page
             console.log('Going to the changelog page...');
             await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=250');
                 console.log(date)
             console.log('Changelog page...');
-
 
             var theDate = new Date(date).toLocaleDateString('en-US', {
                 year: 'numeric',
