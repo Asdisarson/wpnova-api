@@ -46,16 +46,16 @@ async function handleLogin(page) {
     try {
         await page.goto('https://www.realgpl.com/my-account/', {
             waitUntil: ['networkidle0', 'domcontentloaded', 'load'],
-            timeout: 60000
+            timeout: 120000
         });
 
         // Wait for critical elements to be truly ready
         console.log('Waiting for page to be fully interactive...');
         await Promise.all([
-            page.waitForSelector('#username', { visible: true, timeout: 30000 }),
-            page.waitForSelector('#password', { visible: true, timeout: 30000 }),
-            page.waitForSelector('.aiowps-captcha-equation', { visible: true, timeout: 30000 }),
-            page.waitForSelector('.woocommerce-form-login__submit', { visible: true, timeout: 30000 })
+            page.waitForSelector('#username', { visible: true, timeout: 60000 }),
+            page.waitForSelector('#password', { visible: true, timeout: 60000 }),
+            page.waitForSelector('.aiowps-captcha-equation', { visible: true, timeout: 60000 }),
+            page.waitForSelector('.woocommerce-form-login__submit', { visible: true, timeout: 60000 })
         ]);
 
         // Additional wait to ensure JavaScript is fully loaded
@@ -63,7 +63,7 @@ async function handleLogin(page) {
             return document.readyState === 'complete' && 
                    !document.querySelector('.loading') &&
                    window.jQuery !== undefined;
-        }, { timeout: 30000 });
+        }, { timeout: 60000 });
 
         console.log('Page is fully loaded and interactive');
         
@@ -74,12 +74,12 @@ async function handleLogin(page) {
                 console.log('Handling consent popup...');
                 await consentButton.click();
                 // Wait for consent animation to complete
-                await page.waitForTimeout(1500);
+                await page.waitForTimeout(2500);
                 // Wait for any overlay to disappear
                 await page.waitForFunction(() => {
                     const overlay = document.querySelector('.fc-consent-overlay');
                     return !overlay || overlay.style.display === 'none';
-                }, { timeout: 5000 });
+                }, { timeout: 10000 });
             }
         } catch (error) {
             console.log('No consent popup found or already handled');
@@ -113,7 +113,7 @@ async function handleLogin(page) {
                         page.waitForSelector('.aiowps-captcha-equation', { visible: true, timeout: 30000 })
                     ]);
                     
-                    await page.waitForTimeout(2000); // Additional stability wait
+                    await page.waitForTimeout(3000); // Additional stability wait
                 }
                 
                 // Get and log the current captcha equation before solving
@@ -142,20 +142,20 @@ async function handleLogin(page) {
                 await Promise.all([
                     page.waitForNavigation({ 
                         waitUntil: ['networkidle0', 'domcontentloaded', 'load'],
-                        timeout: 30000 
+                        timeout: 60000 
                     }),
                     page.click('.woocommerce-form-login__submit')
                 ]);
                 
                 // Wait for post-login page to be fully loaded
-                await page.waitForTimeout(2000);
+                await page.waitForTimeout(4000);
                 
                 // Verify login success
                 const errorMessage = await page.$('.woocommerce-error');
                 if (errorMessage) {
                     const error = await page.evaluate(el => el.textContent, errorMessage);
                     console.log('Login failed:', error.trim());
-                    if (attempt < 3) await page.waitForTimeout(3000);
+                    if (attempt < 3) await page.waitForTimeout(5000);
                     continue;
                 }
                 
@@ -166,7 +166,7 @@ async function handleLogin(page) {
                 }
                 
                 console.log('Login status unclear - no error but not on account page');
-                if (attempt < 3) await page.waitForTimeout(3000);
+                if (attempt < 3) await page.waitForTimeout(5000);
                 
             } catch (error) {
                 console.error(`Error during login attempt ${attempt}:`, error.message);
@@ -262,7 +262,7 @@ const scheduledTask = async (date = new Date()) => {
 
         // Create new page with longer timeout
         const page = await browser.newPage();
-        page.setDefaultTimeout(30000);
+        page.setDefaultTimeout(60000);
         
         // Set a reasonable viewport
         await page.setViewport({ width: 1280, height: 800 });
@@ -305,8 +305,8 @@ const scheduledTask = async (date = new Date()) => {
             
             currentPage++;
             if (currentPage <= maxPages) {
-                console.log('Waiting 2 seconds before next page...');
-                await new Promise(resolve => setTimeout(resolve, 2000));
+                console.log('Waiting 4 seconds before next page...');
+                await new Promise(resolve => setTimeout(resolve, 4000));
             }
         }
 
