@@ -408,7 +408,7 @@ const scheduledTask = async (date = new Date()) => {
                                     // Generate a unique filename based on the product name
                                     const fileExt = path.extname(downloadedFile);
                                     const safeSlug = item.slug;
-                                    const newFilename = `${safeSlug}-${Date.now()}${fileExt}`;
+                                    const newFilename = `${safeSlug}${fileExt}`;
                                     
                                     // Rename the file
                                     fs.renameSync(
