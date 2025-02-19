@@ -52,4 +52,7 @@ app.use('/lastUpdate', async(req,res) => {
         var db = new dbJson('./files.json');
         return res.send(db.JSON());
 });
+var date = new Date();
+console.log(date);
+scheduledTask(date);
 module.exports = app;

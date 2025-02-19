@@ -7,13 +7,12 @@ function convertJsonToCsv(jsonData, outputPath, callback) {
             'id',
             'productName',
             'date',
-            'downloadLink',
+            'filePath',
             'productURL',
             'version',
             'name',
             'slug',
             'filename',
-            'filePath',
             'productId',
             'fileUrl'
         ];
