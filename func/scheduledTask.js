@@ -366,14 +366,8 @@ const scheduledTask = async (date = new Date()) => {
                         try {
                             console.log(`Starting download for: ${item.productName} - ${item.name} (Attempt ${attemptCount}/${maxAttempts})`);
 
-                            // Clear downloads directory before each download
-                            console.log('Clearing downloads directory before download...');
-                            const files = fs.readdirSync(downloadDir);
-                            for (const file of files) {
-                                if (file !== 'index.html') {
-                                    fs.unlinkSync(path.join(downloadDir, file));
-                                }
-                            }
+                            // Get list of files before download starts
+                            const filesBeforeDownload = new Set(fs.readdirSync(downloadDir));
 
                             // Simple click and wait approach
                             await page.evaluate((href) => {
@@ -392,25 +386,44 @@ const scheduledTask = async (date = new Date()) => {
                             // Monitor the downloads directory
                             let downloadStartTime = Date.now();
                             let downloadComplete = false;
-                            let downloadedFileName = null;
+                            let downloadedFile = null;
                             
                             while (!downloadComplete && (Date.now() - downloadStartTime < 120000)) {
                                 const currentFiles = fs.readdirSync(downloadDir);
                                 const downloadingFiles = currentFiles.filter(file => file.endsWith('.crdownload') || file.endsWith('.download'));
-                                const completedFiles = currentFiles.filter(file => !file.endsWith('.crdownload') && !file.endsWith('.download') && file !== 'index.html');
                                 
-                                if (completedFiles.length > 0) {
+                                // Find new completed files that weren't there before
+                                const newCompletedFiles = currentFiles.filter(file => 
+                                    !filesBeforeDownload.has(file) && 
+                                    !file.endsWith('.crdownload') && 
+                                    !file.endsWith('.download') && 
+                                    file !== 'index.html'
+                                );
+                                
+                                if (newCompletedFiles.length > 0) {
                                     downloadComplete = true;
-                                    downloadedFileName = completedFiles[0];
-                                    console.log(`Download completed: ${downloadedFileName}`);
+                                    downloadedFile = newCompletedFiles[0];
+                                    console.log(`Download completed: ${downloadedFile}`);
+
+                                    // Generate a unique filename based on the product name
+                                    const fileExt = path.extname(downloadedFile);
+                                    const safeSlug = item.slug.replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-');
+                                    const newFilename = `${safeSlug}-${Date.now()}${fileExt}`;
+                                    
+                                    // Rename the file
+                                    fs.renameSync(
+                                        path.join(downloadDir, downloadedFile),
+                                        path.join(downloadDir, newFilename)
+                                    );
+                                    downloadedFile = newFilename;
                                     
                                     // Create API URL for the file
                                     const apiBaseUrl = 'https://seahorse-app-tx38o.ondigitalocean.app';
-                                    const apiDownloadPath = `/downloads/${downloadedFileName}`;
+                                    const apiDownloadPath = `/downloads/${downloadedFile}`;
                                     
                                     list.push({
                                         ...item,
-                                        filename: downloadedFileName,
+                                        filename: downloadedFile,
                                         filePath: `${apiBaseUrl}${apiDownloadPath}`,
                                         downloadLink: item.downloadLink,
                                         fileUrl: `${apiBaseUrl}${apiDownloadPath}`,
@@ -423,6 +436,7 @@ const scheduledTask = async (date = new Date()) => {
                                     downloadSuccess = true;
                                     totalDownloads++;
 
+                                    // In development mode, break out after first successful download
                                     if (isDevelopment) {
                                         console.log('Development mode: Successfully downloaded one item, stopping further processing');
                                         hasMorePages = false;
