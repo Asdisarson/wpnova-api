@@ -512,25 +512,6 @@ const scheduledTask = async (date = new Date()) => {
                 console.log('Failed items:', error);
             }
 
-            // Schedule cleanup after an hour
-            console.log('Scheduling cleanup in one hour...');
-            setTimeout(() => {
-                console.log('Running scheduled cleanup...');
-                const downloadDir = path.join(process.cwd(), 'public/downloads');
-                const existingFiles = fs.readdirSync(downloadDir);
-                for (const file of existingFiles) {
-                    if (file !== 'index.html') {  // Preserve index.html
-                        try {
-                            fs.unlinkSync(path.join(downloadDir, file));
-                            console.log(`Cleaned up file: ${file}`);
-                        } catch (err) {
-                            console.error(`Error cleaning up file ${file}:`, err);
-                        }
-                    }
-                }
-                console.log('Cleanup completed');
-            }, 3600000); // 1 hour = 3600000 milliseconds
-
             // Close the Puppeteer browser
             await browser.close();
 
