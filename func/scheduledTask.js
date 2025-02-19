@@ -366,6 +366,15 @@ const scheduledTask = async (date = new Date()) => {
                         try {
                             console.log(`Starting download for: ${item.productName} - ${item.name} (Attempt ${attemptCount}/${maxAttempts})`);
 
+                            // Clear downloads directory before each download
+                            console.log('Clearing downloads directory before download...');
+                            const files = fs.readdirSync(downloadDir);
+                            for (const file of files) {
+                                if (file !== 'index.html') {
+                                    fs.unlinkSync(path.join(downloadDir, file));
+                                }
+                            }
+
                             // Simple click and wait approach
                             await page.evaluate((href) => {
                                 const link = document.querySelector(`a[href="${href}"]`);
@@ -383,45 +392,43 @@ const scheduledTask = async (date = new Date()) => {
                             // Monitor the downloads directory
                             let downloadStartTime = Date.now();
                             let downloadComplete = false;
+                            let downloadedFileName = null;
                             
                             while (!downloadComplete && (Date.now() - downloadStartTime < 120000)) {
-                                const files = fs.readdirSync(downloadDir);
-                                const downloadingFiles = files.filter(file => file.endsWith('.crdownload') || file.endsWith('.download'));
+                                const currentFiles = fs.readdirSync(downloadDir);
+                                const downloadingFiles = currentFiles.filter(file => file.endsWith('.crdownload') || file.endsWith('.download'));
+                                const completedFiles = currentFiles.filter(file => !file.endsWith('.crdownload') && !file.endsWith('.download') && file !== 'index.html');
                                 
-                                if (files.length > 0) {
-                                    if (downloadingFiles.length === 0) {
-                                        // Download completed
-                                        downloadComplete = true;
-                                        const downloadedFile = files[0]; // Get the first file
-                                        console.log(`Download completed: ${downloadedFile}`);
-                                        
-                                        // Create API URL for the file
-                                        const apiBaseUrl = 'https://seahorse-app-tx38o.ondigitalocean.app';
-                                        const apiDownloadPath = `/downloads/${downloadedFile}`;
-                                        
-                                        list.push({
-                                            ...item,
-                                            filename: downloadedFile,
-                                            filePath: `${apiBaseUrl}${apiDownloadPath}`, // Store full API URL instead of local path
-                                            downloadLink: item.downloadLink,
-                                            fileUrl: `${apiBaseUrl}${apiDownloadPath}`, // Also update fileUrl to use API URL
-                                            name: item.name,
-                                            slug: item.slug,
-                                            downloadStatus: 'success',
-                                            downloadTime: new Date().toISOString()
-                                        });
-                                        
-                                        downloadSuccess = true;
-                                        totalDownloads++;
+                                if (completedFiles.length > 0) {
+                                    downloadComplete = true;
+                                    downloadedFileName = completedFiles[0];
+                                    console.log(`Download completed: ${downloadedFileName}`);
+                                    
+                                    // Create API URL for the file
+                                    const apiBaseUrl = 'https://seahorse-app-tx38o.ondigitalocean.app';
+                                    const apiDownloadPath = `/downloads/${downloadedFileName}`;
+                                    
+                                    list.push({
+                                        ...item,
+                                        filename: downloadedFileName,
+                                        filePath: `${apiBaseUrl}${apiDownloadPath}`,
+                                        downloadLink: item.downloadLink,
+                                        fileUrl: `${apiBaseUrl}${apiDownloadPath}`,
+                                        name: item.name,
+                                        slug: item.slug,
+                                        downloadStatus: 'success',
+                                        downloadTime: new Date().toISOString()
+                                    });
+                                    
+                                    downloadSuccess = true;
+                                    totalDownloads++;
 
-                                        // In development mode, break out after first successful download
-                                        if (isDevelopment) {
-                                            console.log('Development mode: Successfully downloaded one item, stopping further processing');
-                                            hasMorePages = false;
-                                            break;
-                                        }
+                                    if (isDevelopment) {
+                                        console.log('Development mode: Successfully downloaded one item, stopping further processing');
+                                        hasMorePages = false;
                                         break;
                                     }
+                                    break;
                                 }
                                 
                                 // Wait a second before checking again
