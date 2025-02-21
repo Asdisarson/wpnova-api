@@ -425,25 +425,16 @@ const scheduledTask = async (date = new Date()) => {
                                     downloadedFile = newCompletedFiles[0];
                                     console.log(`Download completed: ${downloadedFile}`);
 
-                                    // Generate a unique filename based on the product name
-                                    const fileExt = path.extname(downloadedFile);
-                                    const safeSlug = item.slug;
-                                    const newFilename = `${safeSlug}${fileExt}`;
-                                    
-                                    // Rename the file
-                                    fs.renameSync(
-                                        path.join(downloadDir, downloadedFile),
-                                        path.join(downloadDir, newFilename)
-                                    );
-                                    downloadedFile = newFilename;
+                                    // Keep the original downloaded filename
+                                    const originalFilename = downloadedFile;
                                     
                                     // Create API URL for the file
                                     const apiBaseUrl = 'https://seahorse-app-tx38o.ondigitalocean.app';
-                                    const apiDownloadPath = `/downloads/${downloadedFile}`;
+                                    const apiDownloadPath = `/downloads/${originalFilename}`;
                                     
                                     list.push({
                                         ...item,
-                                        filename: downloadedFile,
+                                        filename: originalFilename,
                                         filePath: `${apiBaseUrl}${apiDownloadPath}`,
                                         downloadLink: item.downloadLink,
                                         fileUrl: `${apiBaseUrl}${apiDownloadPath}`,
@@ -524,11 +515,25 @@ const scheduledTask = async (date = new Date()) => {
                     } else {
                         currentPage++;
                         console.log('Moving to next page...');
-                        await Promise.all([
-                            page.waitForNavigation({ waitUntil: 'networkidle0' }),
-                            nextButton.click()
-                        ]);
-                        await randomDelay(2000, 4000);
+                        try {
+                            await Promise.all([
+                                page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 30000 }),
+                                nextButton.click()
+                            ]);
+                            await randomDelay(2000, 4000);
+                            
+                            // Verify we're on the new page
+                            const currentPageNum = await page.evaluate(() => {
+                                const currentPage = document.querySelector('.page-numbers.current');
+                                return currentPage ? parseInt(currentPage.textContent) : null;
+                            });
+                            console.log(`Successfully moved to page ${currentPageNum}`);
+                            
+                        } catch (navigationError) {
+                            console.error('Navigation error:', navigationError);
+                            hasMorePages = false;
+                            console.log('Failed to navigate to next page - stopping pagination');
+                        }
                     }
                 }
             }
