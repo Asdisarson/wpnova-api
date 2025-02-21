@@ -334,7 +334,7 @@ const scheduledTask = async (date = new Date()) => {
                                         productURL: titleElement.href,
                                         version: titleElement.innerText.match(/v\d+(\.\d+)*/) ? titleElement.innerText.match(/v\d+(\.\d+)*/)[0] : '',
                                         name: linkName,
-                                        slug: linkName.toLowerCase().replace(/\s+/g, '-'),
+                                        slug: linkName,
                                         filename: '',
                                         filePath: '',
                                         productId: productId,
