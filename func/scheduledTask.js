@@ -345,7 +345,7 @@ const scheduledTask = async (date = new Date()) => {
                                         date: targetDate,
                                         downloadLink: downloadLink.href,
                                         productURL: titleElement.href,
-                                        version: titleElement.innerText.match(/v\d+(\.\d+)*/) ? titleElement.innerText.match(/v\d+(\.\d+)*/)[0] : '',
+                                        version: titleElement.innerText.match(/v\d+(\.\d+)*/) ? titleElement.innerText.match(/v\d+(\.\d+)*/)[0].replace('v', '') : '',
                                         name: linkName,
                                         slug: slug,
                                         filename: '',
