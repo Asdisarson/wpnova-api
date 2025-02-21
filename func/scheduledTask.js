@@ -324,7 +324,20 @@ const scheduledTask = async (date = new Date()) => {
                                     const isLocked = downloadLink.classList.contains('locked');
                                     console.log(`Link locked status: ${isLocked}`); // Debug log
                                     
-                                    // Attempt download regardless of lock status
+                                    // Extract slug from product URL
+                                    let slug = '';
+                                    let productId = '';
+                                    try {
+                                        const url = titleElement.href;
+                                        let parsedUrl = new URL(url);
+                                        // Get the last part of the URL after the last slash
+                                        let parts = parsedUrl.pathname.split('/').filter(part => part);
+                                        slug = parts[parts.length - 1]; // Extract the slug from the URL
+                                        productId = parsedUrl.searchParams.get("product_id") || '';
+                                    } catch (e) {
+                                        console.log('Error extracting slug:', e);
+                                    }
+
                                     const linkName = downloadLink.querySelector('.yith-wcmbs-download-button__name')?.innerText?.trim() || '';
                                     matchingItems.push({
                                         id: productId,
@@ -334,7 +347,7 @@ const scheduledTask = async (date = new Date()) => {
                                         productURL: titleElement.href,
                                         version: titleElement.innerText.match(/v\d+(\.\d+)*/) ? titleElement.innerText.match(/v\d+(\.\d+)*/)[0] : '',
                                         name: linkName,
-                                        slug: linkName,
+                                        slug: slug,
                                         filename: '',
                                         filePath: '',
                                         productId: productId,
