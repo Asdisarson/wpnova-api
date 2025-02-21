@@ -364,6 +364,13 @@ const scheduledTask = async (date = new Date()) => {
 
                 console.log(`Found ${items.length} items on page ${currentPage}`);
 
+                // Stop pagination if no items found on the current page
+                if (items.length === 0) {
+                    hasMorePages = false;
+                    console.log('No items found on current page - stopping pagination');
+                    break;
+                }
+
                 // In development mode, only process one item if we haven't downloaded anything yet
                 const itemsToProcess = isDevelopment ? (totalDownloads === 0 ? items : []) : items;
                 console.log(`Processing ${itemsToProcess.length} items (${isDevelopment ? 'development mode' : 'production mode'})`);
@@ -509,13 +516,20 @@ const scheduledTask = async (date = new Date()) => {
                     hasMorePages = false;
                     console.log('Development mode: Found one item to download, stopping pagination');
                 } else {
-                    currentPage++;
-                    console.log('Moving to next page...');
-                    await Promise.all([
-                        page.waitForNavigation({ waitUntil: 'networkidle0' }),
-                        page.click('.next.page-numbers')
-                    ]);
-                    await randomDelay(2000, 4000);
+                    // Check if next page button exists before trying to click it
+                    const nextButton = await page.$('.next.page-numbers');
+                    if (!nextButton) {
+                        hasMorePages = false;
+                        console.log('No next page button found - this is the last page');
+                    } else {
+                        currentPage++;
+                        console.log('Moving to next page...');
+                        await Promise.all([
+                            page.waitForNavigation({ waitUntil: 'networkidle0' }),
+                            nextButton.click()
+                        ]);
+                        await randomDelay(2000, 4000);
+                    }
                 }
             }
 
