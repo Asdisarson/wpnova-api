@@ -366,9 +366,14 @@ const scheduledTask = async (date = new Date()) => {
 
                 // Stop pagination if no items found on the current page
                 if (items.length === 0) {
-                    hasMorePages = false;
-                    console.log('No items found on current page - stopping pagination');
-                    break;
+                    // Only stop if we've found at least one download or we're not in production mode
+                    if (totalDownloads > 0 || !process.env.NODE_ENV) {
+                        hasMorePages = false;
+                        console.log('No items found on current page - stopping pagination');
+                        break;
+                    } else {
+                        console.log('No items found on current page but continuing to search for downloads');
+                    }
                 }
 
                 // In development mode, only process one item if we haven't downloaded anything yet
@@ -501,8 +506,13 @@ const scheduledTask = async (date = new Date()) => {
                     const rows = document.querySelectorAll('tr.awcpt-row');
                     return rows.length < 20;
                 })) {
-                    hasMorePages = false;
-                    console.log('Less than 20 items found - this is the last page');
+                    // Only stop if we've found at least one download
+                    if (totalDownloads > 0) {
+                        hasMorePages = false;
+                        console.log('Less than 20 items found - this is the last page');
+                    } else {
+                        console.log('Less than 20 items found but continuing to search for downloads');
+                    }
                 } else if (isDevelopment && totalDownloads > 0) {
                     hasMorePages = false;
                     console.log('Development mode: Found one item to download, stopping pagination');
