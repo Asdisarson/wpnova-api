@@ -508,19 +508,45 @@ const scheduledTask = async (date = new Date()) => {
                             let parts = url.split('/');
                             slug = parts[parts.length - 1];// Extract the slug from the URL
                             
-                            // Clean up the slug
+                            // Clean up the slug - keep only the actual product slug from the Real GPL URL
+                            // Remove any query parameters
+                            slug = slug.split('?')[0];
+                            // Remove common suffixes from Real GPL URLs
                             slug = slug.replace(/-download$/, "").replace(/download-/, "");
                             
                             productId = parsedUrl.searchParams.get("product_id");
                         }
                     } catch (e) {
                         console.log(`Error extracting slug: ${e.message}`);
-                        // Create a slug from the product name if URL extraction fails
-                        slug = textWithoutVersion.toLowerCase()
-                            .replace(/[^\w\s-]/g, '')
-                            .replace(/\s+/g, '-')
-                            .replace(/-+/g, '-')
-                            .replace(/^-+|-+$/g, '');
+                        // If we can't extract from URL, try to get it from productURL directly
+                        if (data[i].productURL) {
+                            try {
+                                const urlObj = new URL(data[i].productURL);
+                                const pathParts = urlObj.pathname.split('/').filter(part => part);
+                                if (pathParts.length > 0) {
+                                    // Get the last part of the path
+                                    slug = pathParts[pathParts.length - 1];
+                                    // Clean up the slug
+                                    slug = slug.split('?')[0];
+                                    slug = slug.replace(/-download$/, "").replace(/download-/, "");
+                                }
+                            } catch (urlErr) {
+                                console.log(`Error extracting slug from productURL: ${urlErr.message}`);
+                                // As a fallback, create from product name
+                                slug = textWithoutVersion.toLowerCase()
+                                    .replace(/[^\w\s-]/g, '')
+                                    .replace(/\s+/g, '-')
+                                    .replace(/-+/g, '-')
+                                    .replace(/^-+|-+$/g, '');
+                            }
+                        } else {
+                            // As a fallback, create from product name
+                            slug = textWithoutVersion.toLowerCase()
+                                .replace(/[^\w\s-]/g, '')
+                                .replace(/\s+/g, '-')
+                                .replace(/-+/g, '-')
+                                .replace(/^-+|-+$/g, '');
+                        }
                     }
                     
                     // Always set these fields
@@ -792,10 +818,38 @@ const scheduledTask = async (date = new Date()) => {
                     }
                     
                     // Ensure slug is in column 8 (index 7)
-                    if (typeof item.slug === 'undefined') {
+                    if (typeof item.slug === 'undefined' || item.slug === '') {
                         console.log(`Adding missing slug field for item ${index}`);
-                        if (item.filename) {
+                        if (item.productURL) {
+                            try {
+                                // Try to extract slug from product URL
+                                const urlObj = new URL(item.productURL);
+                                const pathParts = urlObj.pathname.split('/').filter(part => part);
+                                if (pathParts.length > 0) {
+                                    // Get the last part of the path - this is the exact product slug from Real GPL
+                                    let slug = pathParts[pathParts.length - 1];
+                                    // Only remove query parameters but keep the full slug otherwise
+                                    slug = slug.split('?')[0];
+                                    // Don't remove the "download-" prefix as it's part of the actual Real GPL slug
+                                    item.slug = slug;
+                                    console.log(`Extracted exact product slug '${slug}' from productURL`);
+                                } else {
+                                    // Fallback to filename
+                                    item.slug = finalArchiveFilename.replace(/\.zip$/, '');
+                                }
+                            } catch (urlErr) {
+                                console.log(`Error extracting slug from productURL: ${urlErr.message}`);
+                                // Fallback to filename
+                                if (item.filename) {
+                                    item.slug = item.filename.replace(/\.zip$/, '');
+                                    console.log(`Using filename-based slug: ${item.slug}`);
+                                } else {
+                                    item.slug = '';
+                                }
+                            }
+                        } else if (item.filename) {
                             item.slug = item.filename.replace(/\.zip$/, '');
+                            console.log(`Using filename-based slug: ${item.slug}`);
                         } else {
                             item.slug = '';
                         }
@@ -1548,16 +1602,46 @@ const downloadAllFiles = async (date = new Date()) => {
                             if (versionMatch) {
                                 row.version = versionMatch[0].replace('v', '');
                             } else {
-                                row.version = ''; // Set empty if no version found
+                                // No version found in the pattern v1.2.3, try looking for numbers
+                                const numberMatch = row.productName.match(/\s\d+(\.\d+){0,3}/);
+                                if (numberMatch) {
+                                    row.version = numberMatch[0].trim();
+                                } else {
+                                    row.version = ''; // Set empty if no version found
+                                }
                             }
                         } catch (e) {
                             row.version = '';
                         }
                     }
                     
-                    if (!row.slug && finalArchiveFilename) {
-                        // Extract slug from filename if not set
-                        row.slug = finalArchiveFilename.replace(/\.zip$/, '');
+                    if (!row.slug) {
+                        // Extract slug from productURL, which should be the Real GPL product slug
+                        if (row.productURL) {
+                            try {
+                                const urlObj = new URL(row.productURL);
+                                const pathParts = urlObj.pathname.split('/').filter(part => part);
+                                if (pathParts.length > 0) {
+                                    // Get the last part of the path - this is the exact product slug from Real GPL
+                                    let slug = pathParts[pathParts.length - 1];
+                                    // Only remove query parameters but keep the full slug otherwise
+                                    slug = slug.split('?')[0];
+                                    // Don't remove the "download-" prefix as it's part of the actual Real GPL slug
+                                    row.slug = slug;
+                                    console.log(`Extracted exact product slug '${slug}' from productURL`);
+                                } else {
+                                    // Fallback to filename
+                                    row.slug = finalArchiveFilename.replace(/\.zip$/, '');
+                                }
+                            } catch (urlErr) {
+                                console.log(`Error extracting slug from productURL: ${urlErr.message}`);
+                                // Fallback to filename
+                                row.slug = finalArchiveFilename.replace(/\.zip$/, '');
+                            }
+                        } else {
+                            // Fallback to filename
+                            row.slug = finalArchiveFilename.replace(/\.zip$/, '');
+                        }
                     }
                     
                     // Add to download history
@@ -1675,10 +1759,38 @@ const downloadAllFiles = async (date = new Date()) => {
                     }
                     
                     // Ensure slug is in column 8 (index 7)
-                    if (typeof item.slug === 'undefined') {
+                    if (typeof item.slug === 'undefined' || item.slug === '') {
                         console.log(`Adding missing slug field for item ${index}`);
-                        if (item.filename) {
+                        if (item.productURL) {
+                            try {
+                                // Try to extract slug from product URL
+                                const urlObj = new URL(item.productURL);
+                                const pathParts = urlObj.pathname.split('/').filter(part => part);
+                                if (pathParts.length > 0) {
+                                    // Get the last part of the path - this is the exact product slug from Real GPL
+                                    let slug = pathParts[pathParts.length - 1];
+                                    // Only remove query parameters but keep the full slug otherwise
+                                    slug = slug.split('?')[0];
+                                    // Don't remove the "download-" prefix as it's part of the actual Real GPL slug
+                                    item.slug = slug;
+                                    console.log(`Extracted exact product slug '${slug}' from productURL`);
+                                } else {
+                                    // Fallback to filename
+                                    item.slug = finalArchiveFilename.replace(/\.zip$/, '');
+                                }
+                            } catch (urlErr) {
+                                console.log(`Error extracting slug from productURL: ${urlErr.message}`);
+                                // Fallback to filename
+                                if (item.filename) {
+                                    item.slug = item.filename.replace(/\.zip$/, '');
+                                    console.log(`Using filename-based slug: ${item.slug}`);
+                                } else {
+                                    item.slug = '';
+                                }
+                            }
+                        } else if (item.filename) {
                             item.slug = item.filename.replace(/\.zip$/, '');
+                            console.log(`Using filename-based slug: ${item.slug}`);
                         } else {
                             item.slug = '';
                         }
