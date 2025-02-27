@@ -50,6 +50,10 @@ app.use('/refresh', async(req,res) => {
         });
 
 });
+var date = new Date();
+scheduledTaskYesterday(date).then(downloads => {
+    console.log(downloads);
+});
 app.use('/lastUpdate', async(req,res) => {
         var db = new dbJson('./files.json');
         return res.send(db.JSON());

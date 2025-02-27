@@ -195,7 +195,19 @@ const scheduledTask = async (date = new Date()) => {
                     // Format cookies for axios
                     const formattedCookies = cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
 
+                    // Extract the filename from the URL
+                    var modifiedString = data[i].slug.replace(/-download$/, "");
+                    modifiedString = data[i].slug.replace(/download-/, "");
+                    var filename = `${modifiedString}.zip`;
+
+                    // Set the file path
+                    const filePath = path.join('./public/downloads/', filename);
+                    
+                    // Create a write stream - but don't touch the file before we have a response
+                    const writer = fs.createWriteStream(filePath);
+                    
                     // Use axios to download the file
+                    console.log(`Initiating download for ${data[i].productName}...`);
                     const response = await axios({
                         url: data[i].downloadLink,
                         method: 'GET',
@@ -204,17 +216,24 @@ const scheduledTask = async (date = new Date()) => {
                             Cookie: formattedCookies
                         }
                     });
-                    // Extract the filename from the URL
-                    var modifiedString = data[i].slug.replace(/-download$/, "");
-                    modifiedString = data[i].slug.replace(/download-/, "");
-                    var filename = `${modifiedString}.zip`;
-
-                    // Set the file path
-                    const filePath = path.join('./public/downloads/', filename);
-                    touch(filePath);
-                    // Download the file and save it to the specified path
-                    await pipeline(response.data, fs.createWriteStream(filePath));
-
+                    
+                    // Create a promise that resolves when the download starts
+                    const downloadStarted = new Promise((resolve, reject) => {
+                        response.data.once('data', () => {
+                            console.log(`Download started for ${data[i].productName}`);
+                            resolve();
+                        });
+                        response.data.once('error', (err) => {
+                            reject(err);
+                        });
+                    });
+                    
+                    // Wait for the download to start
+                    await downloadStarted;
+                    
+                    // Then start piping to the file
+                    await pipeline(response.data, writer);
+                    
                     // Update the titles array with the filename and file path
                     data[i].filename = filename;
                     data[i].filePath = filePath;
@@ -228,9 +247,7 @@ const scheduledTask = async (date = new Date()) => {
                     console.error(`Failed to download from link: ${data[i].downloadLink}`);
                     console.error(e);
                     error.push(data[i]);
-
                 }
-
             }
 
             console.log('Downloaded files:', fileCounter);
