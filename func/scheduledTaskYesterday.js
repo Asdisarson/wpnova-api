@@ -874,6 +874,11 @@ const scheduledTask = async (date = new Date()) => {
                         console.error('Error:', err);
                     } else {
                         console.log('Data CSV file has been saved:', dataSummary);
+                        
+                        // Notify plugin.php that the data is ready
+                        notifyPluginDataReady(list.length, error.length)
+                            .then(response => console.log('Plugin notification sent successfully:', response))
+                            .catch(err => console.error('Failed to notify plugin:', err));
                     }
                 });
 
@@ -1815,6 +1820,11 @@ const downloadAllFiles = async (date = new Date()) => {
                         console.error('Error:', err);
                     } else {
                         console.log('Data CSV file has been saved:', dataSummary);
+                        
+                        // Notify plugin.php that the data is ready
+                        notifyPluginDataReady(totalDownloadedFiles, error.length)
+                            .then(response => console.log('Plugin notification sent successfully:', response))
+                            .catch(err => console.error('Failed to notify plugin:', err));
                     }
                 });
             } catch (err) {
@@ -1925,6 +1935,57 @@ process.on('SIGINT', () => {
     cleanupUserDataDir();
     process.exit();
 });
+
+// Helper function to notify plugin.php that data processing is complete
+const notifyPluginDataReady = async (successCount, errorCount) => {
+    try {
+        console.log('Triggering product update via WordPress plugin...');
+        
+        // Construct the URL to plugin.php with proper path resolution
+        const pluginUrl = process.env.WORDPRESS_PLUGIN_URL || process.env.PLUGIN_URL || 'https://your-wordpress-site.com/wp-content/plugins/wpnova/plugin.php';
+        
+        if (!pluginUrl || pluginUrl.includes('your-wordpress-site.com')) {
+            console.log('WORDPRESS_PLUGIN_URL environment variable not set. Skipping update trigger.');
+            return { success: false, skipped: true, error: 'Plugin URL not properly configured' };
+        }
+        
+        // Add timestamp to prevent caching
+        const timestamp = new Date().getTime();
+        
+        console.log(`Sending update trigger to: ${pluginUrl}`);
+        const response = await axios.post(pluginUrl, {
+            action: 'data_ready',
+            timestamp: timestamp
+        }, {
+            headers: {
+                'Content-Type': 'application/json',
+                'X-WP-Nova-Api': 'true' // Custom header for authentication if needed
+            },
+            timeout: 30000 // 30 second timeout
+        });
+        
+        console.log(`Update triggered successfully with status: ${response.status}`);
+        console.log(`Response from WordPress: ${JSON.stringify(response.data)}`);
+        return response.data;
+    } catch (error) {
+        console.error('Error triggering product update:');
+        if (error.response) {
+            // The request was made and the server responded with a status code
+            // that falls out of the range of 2xx
+            console.error(`Status: ${error.response.status}`);
+            console.error(`Data: ${JSON.stringify(error.response.data)}`);
+        } else if (error.request) {
+            // The request was made but no response was received
+            console.error('No response received from server');
+        } else {
+            // Something happened in setting up the request that triggered an Error
+            console.error(`Error message: ${error.message}`);
+        }
+        
+        // Don't throw, just log - we don't want to fail the entire process if update trigger fails
+        return { success: false, error: error.message };
+    }
+};
 
 module.exports = scheduledTask;
 module.exports.downloadAllFiles = downloadAllFiles;

@@ -69,11 +69,28 @@ add_action('csv_product_updater_daily_event', 'update_product_files');
 function update_product_files() {
     $csv_file_url = FETCH_API_WPNOVA . 'data.csv';
     $log = array();
+    $result = array(
+        'start_time' => current_time('mysql'),
+        'total_rows' => 0,
+        'products_updated' => 0,
+        'products_not_found' => 0,
+        'download_failures' => 0
+    );
 
     // Get CSV data from the URL
-    $csv_data = array_map('str_getcsv', file($csv_file_url));
+    $csv_data = @array_map('str_getcsv', @file($csv_file_url));
+    
+    if (!$csv_data) {
+        $error_message = 'Failed to fetch CSV data from ' . $csv_file_url;
+        $log[] = $error_message;
+        update_option('csv_product_updater_log', $log);
+        $result['error'] = $error_message;
+        $result['end_time'] = current_time('mysql');
+        return $result;
+    }
+    
     array_shift($csv_data);  // Remove the header row
-
+    $result['total_rows'] = count($csv_data);
     $log[] = 'Total rows in CSV: ' . count($csv_data);
 
     // Iterate over each row of the CSV data
@@ -85,6 +102,7 @@ function update_product_files() {
         // Check if the file URL is valid
         if (filter_var($file_url, FILTER_VALIDATE_URL) === false) {
             $log[] = 'Invalid file URL: ' . $file_url;
+            $result['download_failures']++;
             continue;
         }
 
@@ -94,6 +112,7 @@ function update_product_files() {
         // Check if the file was downloaded successfully
         if ($temp_file_path === false) {
             $log[] = 'Failed to download file from URL: ' . $file_url;
+            $result['download_failures']++;
             continue;
         }
 
@@ -118,13 +137,22 @@ function update_product_files() {
             update_post_meta($product->ID, 'product-version', $row[5]);  // version column
 
             $log[] = 'Updated product: ' . $slug;
+            $result['products_updated']++;
         } else {
             $log[] = 'No product found for slug: ' . $slug;
+            $result['products_not_found']++;
         }
     }
 
     // Store the log data in an option instead of a transient so it persists until the next update
     update_option('csv_product_updater_log', $log);
+    
+    // Add completion information
+    $result['end_time'] = current_time('mysql');
+    $result['duration_seconds'] = strtotime($result['end_time']) - strtotime($result['start_time']);
+    $result['success'] = ($result['download_failures'] === 0);
+    
+    return $result;
 }
 
 // Download a file from a URL and return the path to the downloaded file along with its original name
@@ -222,12 +250,14 @@ function csv_product_updater_admin_page() {
 
     // Print the page title
     echo '<h1>' . esc_html(get_admin_page_title()) . '</h1>';
+    
+    // Remove notification section from admin panel - updates will happen silently when triggered by API
 
     // Print the existing update button with nonce field for security
     echo '<form method="post">';
     wp_nonce_field('csv_product_updater_nonce', 'csv_product_updater_nonce_field');
     echo '<input type="submit" name="csv_product_updater_update" value="Update Products" />';
-    echo '<p>Last updated on: ' . get_option('csv_product_updater_last_updated_date', 'Never') . '</p>';
+    echo '<p>Last manual update on: ' . get_option('csv_product_updater_last_updated_date', 'Never') . '</p>';
     echo '</form>';
     
     // Add the new "Send Refresh Request" button with nonce field and date picker
@@ -315,3 +345,96 @@ function csv_product_updater_enqueue_scripts($hook) {
 }
 
 add_action('admin_enqueue_scripts', 'csv_product_updater_enqueue_scripts');
+
+// Register REST API endpoint to receive notifications when data.csv is ready
+add_action('rest_api_init', 'register_data_ready_endpoint');
+
+function register_data_ready_endpoint() {
+    register_rest_route('wpnova/v1', '/data-ready', array(
+        'methods' => 'POST',
+        'callback' => 'handle_data_ready_notification',
+        'permission_callback' => function() {
+            // You can implement more advanced authentication here
+            return true;
+        }
+    ));
+}
+
+/**
+ * Handle incoming notification that data.csv is ready
+ *
+ * @param WP_REST_Request $request The request object
+ * @return WP_REST_Response Response object
+ */
+function handle_data_ready_notification($request) {
+    // Get parameters from the request
+    $params = $request->get_params();
+    
+    // No notifications - just log the API trigger silently
+    $log_message = sprintf(
+        'Products updated via API trigger at %s',
+        current_time('mysql')
+    );
+    
+    // Add to existing log or create new log
+    $existing_log = get_option('csv_product_updater_log', array());
+    array_unshift($existing_log, $log_message); // Add to beginning of log
+    update_option('csv_product_updater_log', $existing_log);
+    
+    // Update the last update time
+    update_option('csv_product_updater_last_updated_date', current_time('mysql'));
+    
+    // Trigger product update process immediately without notification
+    $update_result = update_product_files();
+    
+    // Return success response
+    return new WP_REST_Response(array(
+        'success' => true,
+        'message' => 'Update triggered successfully',
+        'update_result' => $update_result,
+        'timestamp' => current_time('mysql')
+    ), 200);
+}
+
+// Also handle direct access to plugin.php for non-WordPress environments
+if (basename($_SERVER['SCRIPT_FILENAME']) === 'plugin.php' && !defined('ABSPATH')) {
+    // This code runs when plugin.php is called directly
+    
+    // Check if it's a POST request to handle data ready notification
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        // Get the raw POST data
+        $json_data = file_get_contents('php://input');
+        $data = json_decode($json_data, true);
+        
+        if (isset($data['action']) && $data['action'] === 'data_ready') {
+            // Rather than showing a notification, just trigger the update silently
+            // Include a minimal log entry for diagnostics but don't display to admins
+            $log_file = __DIR__ . '/api_update_log.txt';
+            $log_message = sprintf(
+                "[%s] Products updated via API trigger\n",
+                date('Y-m-d H:i:s')
+            );
+            
+            file_put_contents($log_file, $log_message, FILE_APPEND);
+            
+            // Send success response
+            header('Content-Type: application/json');
+            echo json_encode(array(
+                'success' => true,
+                'message' => 'Update triggered successfully',
+                'timestamp' => date('Y-m-d H:i:s')
+            ));
+            
+            exit;
+        }
+    }
+    
+    // If it's not a valid POST request, return error
+    header('Content-Type: application/json');
+    header('HTTP/1.1 400 Bad Request');
+    echo json_encode(array(
+        'success' => false,
+        'message' => 'Invalid request'
+    ));
+    exit;
+}
