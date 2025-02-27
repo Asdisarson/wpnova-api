@@ -186,65 +186,118 @@ const scheduledTask = async (date = new Date()) => {
             // Process each title and download the files
             let fileCounter = 0;
             let errorCounter = 0;
+
+            // Configure download behavior
+            const downloadPath = path.resolve('./public/downloads/');
+            await page._client.send('Page.setDownloadBehavior', {
+                behavior: 'allow',
+                downloadPath: downloadPath
+            });
+
             for (let i = 0; i < data.length; i++) {
-                console.log(`Starting download for file ${i + 1} of ${data.length}...`);
+                console.log(`Processing download ${i + 1} of ${data.length}: ${data[i].productName}...`);
                 try {
-                    // Get cookies from Puppeteer
-                    const cookies = await page.cookies();
-
-                    // Format cookies for axios
-                    const formattedCookies = cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
-
-                    // Extract the filename from the URL
+                    // Extract the slug for filename
                     var modifiedString = data[i].slug.replace(/-download$/, "");
                     modifiedString = data[i].slug.replace(/download-/, "");
                     var filename = `${modifiedString}.zip`;
-
-                    // Set the file path
                     const filePath = path.join('./public/downloads/', filename);
-                    
-                    // Create a write stream - but don't touch the file before we have a response
-                    const writer = fs.createWriteStream(filePath);
-                    
-                    // Use axios to download the file
-                    console.log(`Initiating download for ${data[i].productName}...`);
-                    const response = await axios({
-                        url: data[i].downloadLink,
-                        method: 'GET',
-                        responseType: 'stream',
-                        headers: {
-                            Cookie: formattedCookies
-                        }
-                    });
-                    
-                    // Create a promise that resolves when the download starts
-                    const downloadStarted = new Promise((resolve, reject) => {
-                        response.data.once('data', () => {
-                            console.log(`Download started for ${data[i].productName}`);
-                            resolve();
-                        });
-                        response.data.once('error', (err) => {
-                            reject(err);
-                        });
-                    });
-                    
-                    // Wait for the download to start
-                    await downloadStarted;
-                    
-                    // Then start piping to the file
-                    await pipeline(response.data, writer);
-                    
-                    // Update the titles array with the filename and file path
-                    data[i].filename = filename;
-                    data[i].filePath = filePath;
 
-                    data[i].fileUrl = path.join(process.env.DOWNLOAD_URL, filename);
-                    console.log('Download Successful: ', data[i].productName)
-                    fileCounter++;
-                    list.push(data[i]);
+                    // Navigate to the download page
+                    console.log(`Navigating to download page for ${data[i].productName}...`);
+                    await page.goto(data[i].productURL, { waitUntil: 'networkidle2' });
+
+                    // Find and click the download button
+                    console.log(`Looking for download button...`);
+                    
+                    // Wait for the download button to be available (adjust selector as needed)
+                    const downloadButton = await page.waitForSelector('.download-button, .woocommerce-Button, a.button, .wp-block-button__link, a[download], a[href*="download"]', { timeout: 30000 });
+                    
+                    // Setup file watcher to detect when download starts/completes
+                    const fileExistsPromise = new Promise((resolve) => {
+                        // Check if the file already exists before we start
+                        const preExistingFiles = fs.readdirSync(downloadPath);
+                        
+                        // Setup a file watcher on the download directory
+                        const watcher = fs.watch(downloadPath, (eventType, filename) => {
+                            if (eventType === 'rename' && filename) {
+                                const fullPath = path.join(downloadPath, filename);
+                                
+                                // Check if this is a new file
+                                if (!preExistingFiles.includes(filename) && fs.existsSync(fullPath)) {
+                                    console.log(`Download detected: ${filename}`);
+                                    watcher.close();
+                                    resolve(fullPath);
+                                }
+                            }
+                        });
+                        
+                        // Set a timeout in case the download takes too long
+                        setTimeout(() => {
+                            watcher.close();
+                            resolve(null);
+                        }, 120000); // 2 minutes timeout
+                    });
+                    
+                    // Click the download button
+                    console.log(`Clicking download button for ${data[i].productName}...`);
+                    await downloadButton.click();
+                    
+                    // Wait for the download to be detected
+                    console.log(`Waiting for download to start...`);
+                    const downloadedPath = await fileExistsPromise;
+                    
+                    if (downloadedPath) {
+                        console.log(`Download detected at: ${downloadedPath}`);
+                        
+                        // Wait for download to complete (check file size stabilization)
+                        await new Promise(resolve => {
+                            let lastSize = 0;
+                            const checkFileComplete = setInterval(() => {
+                                try {
+                                    const stats = fs.statSync(downloadedPath);
+                                    console.log(`Current file size: ${stats.size} bytes`);
+                                    
+                                    if (stats.size > 0 && stats.size === lastSize) {
+                                        clearInterval(checkFileComplete);
+                                        resolve();
+                                    }
+                                    lastSize = stats.size;
+                                } catch (err) {
+                                    console.log(`Error checking file: ${err.message}`);
+                                }
+                            }, 1000); // Check every second
+                            
+                            // Set a timeout in case the file size check gets stuck
+                            setTimeout(() => {
+                                clearInterval(checkFileComplete);
+                                resolve();
+                            }, 60000); // 1 minute timeout
+                        });
+                        
+                        // Rename the file if needed
+                        if (path.basename(downloadedPath) !== filename) {
+                            fs.renameSync(downloadedPath, filePath);
+                            console.log(`File renamed to ${filename}`);
+                        }
+                        
+                        // Update the titles array with the filename and file path
+                        data[i].filename = filename;
+                        data[i].filePath = filePath;
+                        data[i].fileUrl = path.join(process.env.DOWNLOAD_URL, filename);
+                        
+                        console.log('Download Successful: ', data[i].productName);
+                        fileCounter++;
+                        list.push(data[i]);
+                    } else {
+                        throw new Error('Download not detected within timeout period');
+                    }
+                    
+                    // Wait a moment before the next download to avoid overwhelming the server
+                    await page.waitForTimeout(2000);
                 } catch (e) {
                     errorCounter++;
-                    console.error(`Failed to download from link: ${data[i].downloadLink}`);
+                    console.error(`Failed to download: ${data[i].productName}`);
                     console.error(e);
                     error.push(data[i]);
                 }
