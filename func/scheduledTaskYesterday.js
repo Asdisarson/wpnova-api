@@ -895,7 +895,7 @@ const clearDownloadsDirectory = () => {
 };
 
 // New function to download all files from the changelog page
-const downloadAllFiles = async () => {
+const downloadAllFiles = async (date = new Date()) => {
     const dbPath = path.join(__dirname, 'files.json');
     ensureDirectoryExistence(dbPath);
     const db = new JSONdb(dbPath);
@@ -1005,60 +1005,72 @@ const downloadAllFiles = async () => {
             console.log('Going to the changelog page...');
             await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=250', { waitUntil: 'networkidle2' });
             
+            // Format the date for comparison
+            var theDate = new Date(date).toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+            });
+            console.log(`Filtering changelog entries for date: ${theDate}`);
+            
             // Extract all rows from the changelog page
             console.log('Extracting rows from changelog page...');
-            const allRows = await page.evaluate(() => {
+            const allRows = await page.evaluate((targetDate) => {
                 const rows = document.querySelectorAll('tr.awcpt-row');
                 const rowDataArray = [];
                 
                 for (const row of rows) {
                     try {
-                        const id = row.getAttribute('data-id');
-                        const cartIn = row.getAttribute('data-cart-in');
-                        const productName = row.querySelector('.awcpt-title').innerText;
-                        const date = row.querySelector('.awcpt-date').innerText;
+                        const rowDate = row.querySelector('.awcpt-date').innerText;
                         
-                        // Get all download buttons in this row
-                        const downloadBtns = row.querySelectorAll('.awcpt-shortcode-wrap a.yith-wcmbs-download-button');
-                        if (downloadBtns.length === 0) continue; // Skip if no download buttons
-                        
-                        // Collect information about all buttons
-                        const buttons = [];
-                        for (const btn of downloadBtns) {
-                            buttons.push({
-                                href: btn.getAttribute('href'),
-                                className: btn.className,
-                                dataKey: btn.getAttribute('data-key'),
-                                buttonName: btn.querySelector('.yith-wcmbs-download-button__name')?.innerText || '',
-                                isLocked: btn.classList.contains('locked'),
-                                isUnlocked: btn.classList.contains('unlocked')
-                            });
+                        // Filter rows by date
+                        if (targetDate === rowDate) {
+                            const id = row.getAttribute('data-id');
+                            const cartIn = row.getAttribute('data-cart-in');
+                            const productName = row.querySelector('.awcpt-title').innerText;
+                            
+                            // Get all download buttons in this row
+                            const downloadBtns = row.querySelectorAll('.awcpt-shortcode-wrap a.yith-wcmbs-download-button');
+                            if (downloadBtns.length === 0) continue; // Skip if no download buttons
+                            
+                            // Collect information about all buttons
+                            const buttons = [];
+                            for (const btn of downloadBtns) {
+                                buttons.push({
+                                    href: btn.getAttribute('href'),
+                                    className: btn.className,
+                                    dataKey: btn.getAttribute('data-key'),
+                                    buttonName: btn.querySelector('.yith-wcmbs-download-button__name')?.innerText || '',
+                                    isLocked: btn.classList.contains('locked'),
+                                    isUnlocked: btn.classList.contains('unlocked')
+                                });
+                            }
+                            
+                            const productURL = row.querySelector('.awcpt-prdTitle-col a').getAttribute('href');
+                            
+                            // Create an object with the extracted data for each row
+                            const rowData = {
+                                id,
+                                cartIn,
+                                productName,
+                                date: rowDate,
+                                productURL,
+                                multipleButtons: buttons.length > 1,
+                                buttonCount: buttons.length,
+                                buttons: buttons
+                            };
+                            
+                            rowDataArray.push(rowData);
                         }
-                        
-                        const productURL = row.querySelector('.awcpt-prdTitle-col a').getAttribute('href');
-                        
-                        // Create an object with the extracted data for each row
-                        const rowData = {
-                            id,
-                            cartIn,
-                            productName,
-                            date,
-                            productURL,
-                            multipleButtons: buttons.length > 1,
-                            buttonCount: buttons.length,
-                            buttons: buttons
-                        };
-                        
-                        rowDataArray.push(rowData);
                     } catch (e) {
                         console.error(`Error processing row: ${e.message}`);
                     }
                 }
                 
                 return rowDataArray;
-            });
+            }, theDate);
             
-            console.log(`Found ${allRows.length} rows in the changelog`);
+            console.log(`Found ${allRows.length} rows in the changelog for date: ${theDate}`);
             
             // Process each row and download the files
             let fileCounter = 0;

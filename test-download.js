@@ -14,6 +14,25 @@ if (!process.env.NODE_ENV) {
 const mode = process.env.NODE_ENV === 'development' ? 'development' : 'production';
 console.log(`Starting test download in ${mode} mode...`);
 
+// Get the date to use, defaulting to today
+// Can be overridden by passing a date via command line argument
+// Example: node test-download.js "2023-01-15"
+let testDate = new Date();
+if (process.argv.length > 2) {
+  testDate = new Date(process.argv[2]);
+  if (isNaN(testDate.getTime())) {
+    console.error(`Invalid date format: ${process.argv[2]}`);
+    console.error('Please use YYYY-MM-DD format');
+    process.exit(1);
+  }
+}
+
+console.log(`Using date: ${testDate.toLocaleDateString('en-US', {
+  year: 'numeric',
+  month: 'long',
+  day: 'numeric',
+})}`);
+
 if (mode === 'development') {
   console.log('This will download and zip files from up to 2 products');
 } else {
@@ -48,7 +67,7 @@ try {
 
 // Run the download function
 console.log('Starting downloadAllFiles function...');
-downloadAllFiles()
+downloadAllFiles(testDate)
   .then((result) => {
     console.log('Download complete!');
     console.log(`Downloaded ${result.downloadedCount} files`);
