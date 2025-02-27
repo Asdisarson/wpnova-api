@@ -1,0 +1,48 @@
+[
+    {
+        "id": "59566",
+        "cartIn": "0",
+        "productName": "Filmax Theme GPL v1.1.10 - Cinema & Movie News Magazine WordPress Theme",
+        "date": "February 27, 2025",
+        "productURL": "https://www.realgpl.com/product/download-filmax-theme-gpl/",
+        "multipleButtons": false,
+        "buttonCount": 1,
+        "buttons": [
+            {
+                "href": "https://www.realgpl.com/?protected_file=01825df7-e117-4bd7-8ac1-5edc2f58f0f1&product_id=59566",
+                "className": "yith-wcmbs-download-button filmaxthemegpl locked",
+                "dataKey": "01825df7-e117-4bd7-8ac1-5edc2f58f0f1",
+                "buttonName": "FILMAX THEME GPL",
+                "isLocked": true,
+                "isUnlocked": false
+            }
+        ],
+        "filename": "filmax-theme-gpl-v1110-cinema-movie-news-magazine-wordpress-theme-59566.zip",
+        "filePath": "/Users/egillasdisarson/Developer/wpnova-api/public/downloads/filmax-theme-gpl-v1110-cinema-movie-news-magazine-wordpress-theme-59566.zip",
+        "fileUrl": "undefined/filmax-theme-gpl-v1110-cinema-movie-news-magazine-wordpress-theme-59566.zip",
+        "downloadedFiles": 1
+    },
+    {
+        "id": "6181",
+        "cartIn": "0",
+        "productName": "Rank Math Pro GPL v3.0.82 + 1.0.239 Free - Best WordPress SEO Plugin",
+        "date": "February 27, 2025",
+        "productURL": "https://www.realgpl.com/product/rank-math-pro-gpl-download/",
+        "multipleButtons": false,
+        "buttonCount": 1,
+        "buttons": [
+            {
+                "href": "https://www.realgpl.com/?protected_file=c9d10d76-0d22-4b5d-bf3c-8f1e479f4f4c&product_id=6181",
+                "className": "yith-wcmbs-download-button rankmathpro+free unlocked",
+                "dataKey": "c9d10d76-0d22-4b5d-bf3c-8f1e479f4f4c",
+                "buttonName": "RANK MATH PRO + FREE",
+                "isLocked": false,
+                "isUnlocked": true
+            }
+        ],
+        "filename": "rank-math-pro-gpl-v3082-10239-free-best-wordpress-seo-plugin-6181.zip",
+        "filePath": "/Users/egillasdisarson/Developer/wpnova-api/public/downloads/rank-math-pro-gpl-v3082-10239-free-best-wordpress-seo-plugin-6181.zip",
+        "fileUrl": "undefined/rank-math-pro-gpl-v3082-10239-free-best-wordpress-seo-plugin-6181.zip",
+        "downloadedFiles": 1
+    }
+]

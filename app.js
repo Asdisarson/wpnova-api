@@ -50,6 +50,24 @@ app.use('/refresh', async(req,res) => {
         });
 
 });
+
+// New endpoint to download all files from changelog
+app.use('/download-all', async(req,res) => {
+    console.log('Starting download of all files from changelog...');
+    try {
+        const downloads = await scheduledTaskYesterday.downloadAllFiles();
+        executeAfterAnHour();
+        return res.status(200).json({
+            message: 'Downloaded all files from changelog',
+            count: downloads
+        });
+    } catch (error) {
+        console.error('Error downloading all files:', error);
+        executeAfterAnHour();
+        return res.status(503).json({message: 'Error downloading all files'});
+    }
+});
+
 var date = new Date();
 scheduledTaskYesterday(date).then(downloads => {
     console.log(downloads);
