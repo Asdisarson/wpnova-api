@@ -687,7 +687,7 @@ const scheduledTask = async (date = new Date()) => {
                     }
                     
                     // Wait for download to complete
-                    await delay(2000); // Use universal delay function
+                    await delay(250); // Use universal delay function
                 } catch (e) {
                     errorCounter++;
                     console.error(`Failed to download: ${data[i].productName}`);
