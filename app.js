@@ -72,11 +72,6 @@ app.use('/download-all', async(req,res) => {
         return res.status(503).json({message: 'Error downloading all files'});
     }
 });
-
-var date = new Date();
-scheduledTaskYesterday(date).then(downloads => {
-    console.log(downloads);
-});
 app.use('/lastUpdate', async(req,res) => {
         var db = new dbJson('./files.json');
         return res.send(db.JSON());
