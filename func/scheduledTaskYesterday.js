@@ -10,6 +10,9 @@ const convertJsonToCsv = require('./convertJsonToCsv');
 const disk = require('diskusage');
 const os = require('os');
 
+// Add a universal delay function that works with any Puppeteer version
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 // Create a download history database to prevent duplicates
 const downloadHistoryPath = path.join(__dirname, 'download_history.json');
 // Ensure the file exists
@@ -121,7 +124,10 @@ const watchForNewFile = (directoryPath, timeout = 120000) => {
                         if (fullPath === crdownload.expectedFinalPath) {
                             console.log(`Chrome download completed: ${filename}`);
                             watcher.close();
-                            resolve({ path: fullPath, filename });
+                            resolve({ 
+                                path: crdownload.expectedFinalPath, 
+                                filename: filename 
+                            });
                             return;
                         }
                     }
@@ -386,7 +392,7 @@ const scheduledTask = async (date = new Date()) => {
 
             // Go to the changelog page
             console.log('Going to the changelog page...');
-            await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=250');
+            await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=250', { waitUntil: 'networkidle2' });
                 console.log(date)
             console.log('Changelog page...');
 
@@ -680,8 +686,8 @@ const scheduledTask = async (date = new Date()) => {
                         }
                     }
                     
-                    // Wait a moment before the next download
-                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    // Wait for download to complete
+                    await delay(2000); // Use universal delay function
                 } catch (e) {
                     errorCounter++;
                     console.error(`Failed to download: ${data[i].productName}`);
@@ -1180,15 +1186,14 @@ const downloadAllFiles = async () => {
                     // Array to track downloaded files for this row
                     const downloadedFiles = [];
                     
-                    // Navigate to the changelog page only if we're not already there
-                    if (!isOnChangelogPage) {
-                        console.log(`Navigating to changelog page...`);
-                        await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=250', 
-                            { waitUntil: 'networkidle2' });
-                        isOnChangelogPage = true;
-                    } else {
-                        console.log(`Already on changelog page, continuing with downloads...`);
-                    }
+                    // Navigate directly to the product page instead of the changelog page
+                    console.log(`Navigating directly to product page: ${row.productURL}`);
+                    await page.goto(row.productURL, { waitUntil: 'networkidle2' });
+                    
+                    // Use waitFor or waitForTimeout depending on which is available
+                    // This ensures compatibility with different Puppeteer versions
+                    console.log('Waiting for page to fully load...');
+                    await delay(2000); // Use our universal delay function
                     
                     // Process each button in the row ONE AT A TIME
                     for (let b = 0; b < row.buttons.length; b++) {
@@ -1200,458 +1205,179 @@ const downloadAllFiles = async () => {
                         const buttonFilename = `${slugFromName}-${buttonName.toLowerCase().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-')}.zip`;
                         const buttonFilePath = path.join(tempDirPath, buttonFilename);
                         
-                        // Make sure we're watching the correct download directory
-                        const downloadsDir = path.resolve('./public/downloads/');
-                        console.log(`Setting up file watcher for directory: ${downloadsDir}`);
-                        
                         // Start watching for new files before clicking the download button
-                        const fileWatcherPromise = watchForNewFile(downloadsDir);
+                        const fileWatcherPromise = watchForNewFile(downloadPath);
                         
-                        // Click the specific download button in the row
-                        console.log(`Looking for row with product ID: ${row.id} and button ${b+1}...`);
-                        const downloadSuccess = await page.evaluate(async (productId, buttonIndex) => {
-                            // Find the row with the specific data-id
-                            const row = document.querySelector(`tr.awcpt-row[data-id="${productId}"]`);
-                            if (!row) {
-                                return { success: false, error: 'Row not found' };
+                        // Look for download buttons on the product page - handling both single and multi-button scenarios
+                        console.log(`Looking for download buttons on product page for: ${buttonName}...`);
+                        const buttonClicked = await page.evaluate((buttonDataKey, buttonName) => {
+                            // Log what we're looking for
+                            console.log(`Looking for button with data-key: ${buttonDataKey} or name containing: ${buttonName}`);
+                            
+                            // Try to find buttons by multiple methods
+                            const allButtons = document.querySelectorAll('a.yith-wcmbs-download-button');
+                            console.log(`Found ${allButtons.length} download buttons on the page`);
+                            
+                            let targetButton = null;
+                            
+                            // First try: direct match by data-key (most reliable)
+                            if (buttonDataKey) {
+                                targetButton = document.querySelector(`a.yith-wcmbs-download-button[data-key="${buttonDataKey}"]`);
+                                if (targetButton) {
+                                    console.log(`Found button by data-key: ${buttonDataKey}`);
+                                }
                             }
                             
-                            // Find all download buttons in this row
-                            const downloadBtns = row.querySelectorAll('.awcpt-shortcode-wrap a.yith-wcmbs-download-button');
-                            if (downloadBtns.length === 0) {
-                                return { success: false, error: 'No download buttons found in row' };
+                            // Second try: match by name if we have a button name
+                            if (!targetButton && buttonName) {
+                                // Loop through all buttons to find name matches
+                                for (const btn of allButtons) {
+                                    const nameElement = btn.querySelector('.yith-wcmbs-download-button__name');
+                                    if (nameElement && nameElement.innerText === buttonName) {
+                                        targetButton = btn;
+                                        console.log(`Found button by exact name: ${buttonName}`);
+                                        break;
+                                    }
+                                    
+                                    // Try partial match as fallback
+                                    if (nameElement && nameElement.innerText.includes(buttonName)) {
+                                        targetButton = btn;
+                                        console.log(`Found button by partial name match: ${nameElement.innerText}`);
+                                        break;
+                                    }
+                                }
                             }
                             
-                            // Get the specified button
-                            const downloadBtn = downloadBtns[buttonIndex];
-                            if (!downloadBtn) {
-                                return { success: false, error: `Button at index ${buttonIndex} not found` };
+                            // Third try: if there's only one button and we haven't found anything, just use that
+                            if (!targetButton && allButtons.length === 1) {
+                                targetButton = allButtons[0];
+                                console.log(`Using the only available button on the page`);
                             }
                             
-                            // Check if it's locked or unlocked
-                            const isLocked = downloadBtn.classList.contains('locked');
-                            const isUnlocked = downloadBtn.classList.contains('unlocked');
-                            const buttonName = downloadBtn.querySelector('.yith-wcmbs-download-button__name')?.innerText || '';
-                            const href = downloadBtn.getAttribute('href');
+                            // Fourth try: use any button with similar class name
+                            if (!targetButton && buttonDataKey) {
+                                // Extract class name from data-key (often they're related)
+                                const className = buttonDataKey.split('-')[0];
+                                if (className && className.length > 3) {
+                                    const classSelector = `a.yith-wcmbs-download-button[class*="${className}"]`;
+                                    targetButton = document.querySelector(classSelector);
+                                    if (targetButton) {
+                                        console.log(`Found button by class name similarity: ${className}`);
+                                    }
+                                }
+                            }
                             
-                            console.log(`Found button ${buttonIndex} for product ${productId}: ${buttonName}, Locked: ${isLocked}, Unlocked: ${isUnlocked}`);
+                            // Last resort: just pick a button at index
+                            if (!targetButton && allButtons.length > 0) {
+                                const index = Math.min(b, allButtons.length - 1);
+                                targetButton = allButtons[index];
+                                console.log(`Falling back to button at index: ${index}`);
+                            }
                             
-                            // Instead of clicking directly, return the href to open in a new tab
-                            return { 
-                                success: true, 
-                                locked: isLocked, 
-                                unlocked: isUnlocked,
-                                href: href,
-                                buttonName: buttonName
-                            };
-                        }, row.id, b);
+                            // Click the target button if found
+                            if (targetButton) {
+                                targetButton.click();
+                                return true;
+                            }
+                            
+                            return false;
+                        }, button.dataKey, buttonName);
                         
-                        if (!downloadSuccess || !downloadSuccess.success) {
-                            console.error(`Failed to find download button: ${downloadSuccess?.error || 'Unknown error'}`);
+                        if (!buttonClicked) {
+                            console.error(`Failed to click download button: ${buttonName}`);
                             continue; // Skip this button but try others
                         }
                         
-                        // We have a successful button reference, now handle the download
-                        if (downloadSuccess.href) {
-                            console.log(`Download URL: ${downloadSuccess.href}`);
-                            let downloadStarted = false;
-                            
-                            try {
-                                // Try to download directly with the main page first
-                                console.log('Attempting download with main page...');
-                                
-                                // Configure CDP session
-                                await client.send('Page.setDownloadBehavior', {
-                                    behavior: 'allow',
-                                    downloadPath: path.resolve('./public/downloads/')
-                                });
-                                
-                                // Try to click the button on the main page instead of opening a new tab
-                                const buttonClicked = await page.evaluate((productId, buttonIndex) => {
-                                    // Find the row with the specific data-id
-                                    const row = document.querySelector(`tr.awcpt-row[data-id="${productId}"]`);
-                                    if (!row) return false;
-                                    
-                                    // Find all download buttons in this row
-                                    const downloadBtns = row.querySelectorAll('.awcpt-shortcode-wrap a.yith-wcmbs-download-button');
-                                    if (downloadBtns.length === 0) return false;
-                                    
-                                    // Get the specified button
-                                    const downloadBtn = downloadBtns[buttonIndex];
-                                    if (!downloadBtn) return false;
-                                    
-                                    // Click the button
-                                    downloadBtn.click();
-                                    return true;
-                                }, row.id, b);
-                                
-                                if (buttonClicked) {
-                                    console.log('Download button clicked on main page');
-                                    
-                                    // Wait for navigation if needed
-                                    try {
-                                        await page.waitForNavigation({ timeout: 5000 });
-                                        isOnChangelogPage = false;
-                                    } catch (navErr) {
-                                        console.log('No navigation occurred or already completed');
-                                    }
-                                    
-                                    // Check for locked download handling
-                                    if (downloadSuccess.locked) {
-                                        console.log('Processing locked download...');
-                                        const unlockElement = await page.$('button.unlock, a.unlock, input[type="submit"][value*="unlock"]')
-                                            .catch(() => null);
-                                        
-                                        if (unlockElement) {
-                                            console.log('Found unlock element, clicking it...');
-                                            await unlockElement.click();
-                                            await page.waitForNavigation({ timeout: 10000 }).catch(() => {});
-                                        }
-                                    }
-                                    
-                                    // Wait for a direct download link to appear
-                                    console.log('Looking for direct download link...');
-                                    const downloadLink = await page.evaluate(() => {
-                                        const links = Array.from(document.querySelectorAll('a[href*=".zip"], a[href*=".rar"], a[href*=".tar"], a[href*=".gz"]'));
-                                        return links.length > 0 ? links[0].href : null;
-                                    });
-                                    
-                                    if (downloadLink) {
-                                        console.log(`Found direct download link: ${downloadLink}`);
-                                        await page.goto(downloadLink, { waitUntil: 'networkidle2' }).catch(e => {
-                                            console.log(`Navigation error (expected for downloads): ${e.message}`);
-                                        });
-                                        downloadStarted = true;
-                                    }
-                                }
-                                
-                                // If direct approach didn't work, try axios download as backup
-                                if (!downloadStarted) {
-                                    console.log('Attempting direct download via axios...');
-                                    
-                                    try {
-                                        const response = await axios({
-                                            url: downloadSuccess.href,
-                                            method: 'GET',
-                                            responseType: 'stream',
-                                            headers: {
-                                                'User-Agent': await page.evaluate(() => navigator.userAgent),
-                                                'Cookie': await page.evaluate(() => document.cookie)
-                                            },
-                                            maxRedirects: 5,
-                                            timeout: 30000
-                                        });
-                                        
-                                        // Create a temp file in the downloads directory
-                                        const downloadFilePath = path.join(downloadPath, `temp-download-${Date.now()}.zip`);
-                                        const writer = fs.createWriteStream(downloadFilePath);
-                                        
-                                        // Setup file writing
-                                        console.log(`Writing download to: ${downloadFilePath}`);
-                                        let downloadedBytes = 0;
-                                        
-                                        response.data.on('data', (chunk) => {
-                                            downloadedBytes += chunk.length;
-                                            if (downloadedBytes % 1048576 === 0) { // Log every 1MB
-                                                console.log(`Downloaded: ${formatBytes(downloadedBytes)}`);
-                                            }
-                                        });
-                                        
-                                        // Pipe download to file and wait for completion
-                                        await pipeline(response.data, writer);
-                                        console.log(`Direct download complete: ${formatBytes(downloadedBytes)}`);
-                                        
-                                        // Move to the correct location with the right name
-                                        fs.renameSync(downloadFilePath, buttonFilePath);
-                                        console.log(`File moved to: ${buttonFilePath}`);
-                                        
-                                        // Add to downloaded files list
-                                        downloadedFiles.push({
-                                            originalPath: downloadFilePath,
-                                            tempPath: buttonFilePath,
-                                            filename: buttonFilename,
-                                            buttonName: buttonName,
-                                            size: fs.statSync(buttonFilePath).size,
-                                            sizeFormatted: formatBytes(fs.statSync(buttonFilePath).size)
-                                        });
-                                        
-                                        downloadStarted = true;
-                                        totalDownloadedFiles++;
-                                        
-                                        // Go back to changelog page
-                                        console.log('Navigating back to changelog page...');
-                                        await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=250', 
-                                            { waitUntil: 'networkidle2' });
-                                        isOnChangelogPage = true;
-                                        
-                                        // Skip watching for files since we handled it directly
-                                        continue;
-                                    } catch (axiosErr) {
-                                        console.error(`Axios download failed: ${axiosErr.message}`);
-                                    }
-                                }
-                                
-                                // If both approaches failed, try one more with a new tab
-                                if (!downloadStarted) {
-                                    console.log(`Opening download link in new tab as last resort: ${downloadSuccess.href}`);
-                                    
-                                    // Open a new tab with the download URL
-                                    const newPage = await browser.newPage();
-                                    
-                                    // Configure download settings for the new tab
-                                    const newClient = await newPage.target().createCDPSession();
-                                    await newClient.send('Page.setDownloadBehavior', {
-                                        behavior: 'allow',
-                                        downloadPath: path.resolve('./public/downloads/')
-                                    });
-                                    
-                                    // Enable request interception for better handling
-                                    try {
-                                        await newPage.setRequestInterception(true);
-                                        newPage.on('request', async (request) => {
-                                            // If it's a download type, don't abort
-                                            if (request.resourceType() === 'document' || 
-                                                request.resourceType() === 'fetch' || 
-                                                request.resourceType() === 'xhr') {
-                                                request.continue();
-                                            } else if (
-                                                request.url().includes('.zip') || 
-                                                request.url().includes('.rar') || 
-                                                request.url().includes('.gz')) {
-                                                console.log(`Detected download URL: ${request.url()}`);
-                                                request.continue();
-                                            } else {
-                                                request.continue();
-                                            }
-                                        });
-                                    } catch (interceptErr) {
-                                        console.error(`Error setting up request interception: ${interceptErr.message}`);
-                                        // Continue without interception
-                                    }
-                                    
-                                    try {
-                                        // Navigate to the download URL in the new tab with a longer timeout
-                                        await newPage.goto(downloadSuccess.href, { 
-                                            waitUntil: 'networkidle2', 
-                                            timeout: 60000 
-                                        });
-                                        
-                                        // If it's a locked button, handle the unlock process
-                                        if (downloadSuccess.locked) {
-                                            console.log('Processing locked download in new tab...');
-                                            const unlockElement = await newPage.$('button.unlock, a.unlock, input[type="submit"][value*="unlock"]')
-                                                .catch(() => null);
-                                            
-                                            if (unlockElement) {
-                                                console.log('Found unlock element in new tab, clicking it...');
-                                                await unlockElement.click();
-                                                await newPage.waitForNavigation({ timeout: 10000 }).catch(() => {});
-                                            }
-                                        }
-                                        
-                                        // Look for direct download links
-                                        const directLinks = await newPage.evaluate(() => {
-                                            const links = Array.from(document.querySelectorAll('a[href*=".zip"], a[href*=".rar"], a[href*=".tar"], a[href*=".gz"]'));
-                                            return links.map(l => l.href);
-                                        });
-                                        
-                                        if (directLinks.length > 0) {
-                                            console.log(`Found ${directLinks.length} direct download links in new tab`);
-                                            for (const link of directLinks) {
-                                                console.log(`Clicking direct download link: ${link}`);
-                                                await newPage.goto(link, { timeout: 30000 }).catch(e => {
-                                                    console.log(`Expected navigation error for download: ${e.message}`);
-                                                });
-                                                break; // Just try the first link
-                                            }
-                                        }
-                                        
-                                        // Wait a longer time for download to start
-                                        console.log('Waiting longer for download to initiate...');
-                                        await new Promise(resolve => setTimeout(resolve, 10000));
-                                        
-                                        // Keep the tab open longer to ensure download starts
-                                        console.log('Keeping tab open to ensure download starts...');
-                                        await new Promise(resolve => setTimeout(resolve, 5000));
-                                        
-                                        // Close the tab after allowing download to start
-                                        await newPage.close();
-                                        
-                                    } catch (tabError) {
-                                        console.error(`Error in new tab: ${tabError.message}`);
-                                        try {
-                                            await newPage.close();
-                                        } catch (closeErr) {
-                                            console.error(`Error closing page: ${closeErr.message}`);
-                                        }
-                                        // Continue to file watcher to see if download started anyway
-                                    }
-                                }
-                                
-                                // Wait for a new file to appear in the downloads directory
-                                console.log(`Waiting for download to start or complete...`);
-                                const newFile = await fileWatcherPromise;
-                                
-                                if (newFile) {
-                                    console.log(`Download detected: ${newFile.filename}`);
-                                    
-                                    // Get file stats before waiting
-                                    const beforeStats = fs.statSync(newFile.path);
-                                    const downloadStartTime = Date.now();
-                                    
-                                    // Wait for the download to complete
-                                    console.log(`Waiting for download to complete...`);
-                                    await waitForFileToFinish(newFile.path);
-                                    
-                                    // Process the downloaded file
-                                    const afterStats = fs.statSync(newFile.path);
-                                    const downloadEndTime = Date.now();
-                                    const downloadTime = (downloadEndTime - downloadStartTime) / 1000; // in seconds
-                                    const downloadSpeed = afterStats.size / downloadTime;
-                                    
-                                    console.log(`Download completed in ${formatTime(downloadTime)}`);
-                                    console.log(`Average download speed: ${formatSpeed(downloadSpeed)}`);
-                                    
-                                    // Update download statistics
-                                    downloadStats.totalFiles++;
-                                    downloadStats.totalBytes += afterStats.size;
-                                    downloadStats.successfulDownloads++;
-                                    downloadStats.totalDownloadTime += downloadTime;
-                                    totalDownloadedFiles++;
-                                    
-                                    if (afterStats.size > downloadStats.largestFile.size) {
-                                        downloadStats.largestFile = { 
-                                            name: newFile.filename, 
-                                            size: afterStats.size,
-                                            sizeFormatted: formatBytes(afterStats.size)
-                                        };
-                                    }
-                                    
-                                    if (afterStats.size < downloadStats.smallestFile.size) {
-                                        downloadStats.smallestFile = { 
-                                            name: newFile.filename, 
-                                            size: afterStats.size,
-                                            sizeFormatted: formatBytes(afterStats.size)
-                                        };
-                                    }
-                                    
-                                    // Move the file to temp directory with a unique name
-                                    fs.renameSync(newFile.path, buttonFilePath);
-                                    console.log(`File moved to: ${buttonFilePath}`);
-                                    
-                                    // Add to downloaded files list
-                                    downloadedFiles.push({
-                                        originalPath: newFile.path,
-                                        tempPath: buttonFilePath,
-                                        filename: buttonFilename,
-                                        buttonName: button.buttonName || `file-${b+1}`,
-                                        size: afterStats.size,
-                                        sizeFormatted: formatBytes(afterStats.size),
-                                        downloadTime: downloadTime,
-                                        downloadSpeed: downloadSpeed,
-                                        downloadSpeedFormatted: formatSpeed(downloadSpeed)
-                                    });
-                                    
-                                    // Update total bytes downloaded
-                                    totalBytesDownloaded += afterStats.size;
-                                    
-                                    // Show current disk space
-                                    const currentDiskInfo = await getDiskInfo(downloadPath);
-                                    if (currentDiskInfo) {
-                                        console.log('=== Current Disk Space ===');
-                                        console.log(`Available: ${currentDiskInfo.availableFormatted}`);
-                                        console.log(`Used: ${currentDiskInfo.usedPercentage}%`);
-                                        console.log('========================');
-                                    }
-                                } else {
-                                    console.log(`No download detected for button ${b+1}`);
-                                }
-                                
-                            } catch (downloadErr) {
-                                console.error(`Error during download: ${downloadErr.message}`);
-                                // If there was an error during download, try to download directly with axios
-                                try {
-                                    console.log(`Attempting last-resort direct download via axios...`);
-                                    const response = await axios({
-                                        url: downloadSuccess.href,
-                                        method: 'GET',
-                                        responseType: 'stream',
-                                        headers: {
-                                            'User-Agent': await page.evaluate(() => navigator.userAgent),
-                                            'Cookie': await page.evaluate(() => document.cookie)
-                                        },
-                                        maxRedirects: 5,
-                                        timeout: 60000
-                                    });
-                                    
-                                    // Create a temp file in the downloads directory
-                                    const downloadFilePath = path.join(downloadPath, `final-backup-${Date.now()}.zip`);
-                                    const writer = fs.createWriteStream(downloadFilePath);
-                                    
-                                    // Setup file writing
-                                    console.log(`Writing backup download to: ${downloadFilePath}`);
-                                    let downloadedBytes = 0;
-                                    
-                                    response.data.on('data', (chunk) => {
-                                        downloadedBytes += chunk.length;
-                                        if (downloadedBytes % 1048576 === 0) { // Log every 1MB
-                                            console.log(`Downloaded: ${formatBytes(downloadedBytes)}`);
-                                        }
-                                    });
-                                    
-                                    // Pipe download to file and wait for completion
-                                    await pipeline(response.data, writer);
-                                    console.log(`Last-resort download complete: ${formatBytes(downloadedBytes)}`);
-                                    
-                                    // Move to the correct location with the right name
-                                    fs.renameSync(downloadFilePath, buttonFilePath);
-                                    console.log(`File moved to: ${buttonFilePath}`);
-                                    
-                                    // Add to downloaded files list
-                                    downloadedFiles.push({
-                                        originalPath: downloadFilePath,
-                                        tempPath: buttonFilePath,
-                                        filename: buttonFilename,
-                                        buttonName: buttonName,
-                                        size: fs.statSync(buttonFilePath).size,
-                                        sizeFormatted: formatBytes(fs.statSync(buttonFilePath).size)
-                                    });
-                                    
-                                    totalDownloadedFiles++;
-                                } catch (axiosLastErr) {
-                                    console.error(`Last-resort download failed: ${axiosLastErr.message}`);
-                                }
-                            }
-                            
-                            // Ensure we're back on the changelog page for next download
-                            if (!isOnChangelogPage) {
-                                console.log('Navigating back to changelog page...');
-                                await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=250', 
-                                    { waitUntil: 'networkidle2' });
-                                isOnChangelogPage = true;
-                            }
-                        } else {
-                            console.error(`No href found for button ${b+1}, skipping`);
-                            continue;
+                        console.log('Download button clicked on product page');
+                        
+                        // Wait for navigation if needed
+                        try {
+                            await page.waitForNavigation({ timeout: 5000 });
+                        } catch (navErr) {
+                            console.log('No navigation occurred or already completed');
                         }
                         
-                        // Give a small pause between downloads
-                        console.log('Pausing before next download...');
-                        await new Promise(resolve => setTimeout(resolve, 3000));
-                    }
+                        // Check for locked download handling
+                        const isLocked = await page.evaluate(() => {
+                            return document.querySelector('button.unlock, a.unlock, input[type="submit"][value*="unlock"]') !== null;
+                        });
+                        
+                        if (isLocked) {
+                            console.log('Processing locked download...');
+                            try {
+                                await page.click('button.unlock, a.unlock, input[type="submit"][value*="unlock"]');
+                                await page.waitForNavigation({ timeout: 10000 }).catch(() => {});
+                            } catch (unlockErr) {
+                                console.log(`Error unlocking download: ${unlockErr.message}`);
+                            }
+                        }
+                        
+                        // Look for direct download links on the page
+                        const directDownloadUrl = await page.evaluate(() => {
+                            const links = Array.from(document.querySelectorAll('a[href*=".zip"], a[href*=".rar"], a[href*=".tar"], a[href*=".gz"]'));
+                            return links.length > 0 ? links[0].href : null;
+                        });
+                        
+                        if (directDownloadUrl) {
+                            console.log(`Found direct download link: ${directDownloadUrl}`);
+                            try {
+                                await page.goto(directDownloadUrl, { timeout: 30000 }).catch(e => {
+                                    console.log(`Navigation error (expected for downloads): ${e.message}`);
+                                });
+                            } catch (dlErr) {
+                                console.log(`Error initiating download: ${dlErr.message}`);
+                            }
+                        }
+                        
+                        // Wait for download to start and complete
+                        console.log(`Waiting for download to complete...`);
+                        let downloadedFile = null;
+                        
+                        try {
+                            // Wait for file watcher to detect new files (with timeout)
+                            const fileWatchResult = await Promise.race([
+                                fileWatcherPromise,
+                                delay(120000).then(() => { throw new Error('Download timeout'); }) // Replace the inline Promise
+                            ]);
+                            
+                            if (fileWatchResult && fileWatchResult.path) {
+                                downloadedFile = fileWatchResult;
+                                console.log(`Download detected: ${downloadedFile.filename}`);
+                                
+                                // Move the downloaded file to our temp directory with correct name
+                                const afterStats = fs.statSync(downloadedFile.path);
+                                console.log(`Downloaded file size: ${formatBytes(afterStats.size)}`);
+                                
+                                fs.renameSync(downloadedFile.path, buttonFilePath);
+                                console.log(`Moved file to: ${buttonFilePath}`);
+                                
+                                // Add to our list of downloaded files for this product
+                                downloadedFiles.push({
+                                    originalPath: downloadedFile.path,
+                                    tempPath: buttonFilePath,
+                                    filename: buttonFilename,
+                                    buttonName: buttonName,
+                                    size: afterStats.size,
+                                    sizeFormatted: formatBytes(afterStats.size)
+                                });
+                                
+                                totalDownloadedFiles++;
+                            } else {
+                                console.log(`No download detected for button ${b+1}`);
+                            }
+                        } catch (watchErr) {
+                            console.error(`Error waiting for download: ${watchErr.message}`);
+                        }
+                        
+                        // Small pause between downloads of the same product
+                        console.log('Pausing before next button download...');
+                        await delay(3000); // Replace setTimeout with delay function
+                    } // End of button loop
                     
-                    // Check if we have at least one downloaded file
-                    if (downloadedFiles.length === 0) {
-                        throw new Error('No files were successfully downloaded for this row');
-                    }
-                    
-                    // If we only have one file, just rename it to the final filename
-                    if (downloadedFiles.length === 1) {
-                        fs.renameSync(downloadedFiles[0].tempPath, finalArchivePath);
-                        console.log(`Single file renamed to: ${finalArchiveFilename}`);
-                    } else {
-                        // Create a zip archive with all downloaded files
-                        console.log(`Creating zip archive for ${downloadedFiles.length} files...`);
+                    // After processing all buttons for this product
+                    if (downloadedFiles.length > 0) {
+                        // Archive all files into a single zip
+                        console.log(`Creating archive with ${downloadedFiles.length} files for ${row.productName}...`);
                         
                         // Create a file to stream archive data to
                         const output = fs.createWriteStream(finalArchivePath);
@@ -1733,6 +1459,19 @@ const downloadAllFiles = async () => {
                     console.error(`Failed to download: ${row.productName}`);
                     console.error(e);
                     error.push(row);
+                }
+                
+                console.log(`Processed product ${i + 1} of ${rowsToProcess}: ${row.productName}`);
+                console.log('------------------------------------------------------');
+                
+                // If we're not on the last row, don't navigate back to the changelog
+                // Simply process the next product directly
+                if (i < rowsToProcess - 1) {
+                    console.log('Finished with current product, continuing to next product...');
+                    
+                    // Give a pause between products
+                    console.log('Pausing before next product...');
+                    await delay(5000); // Replace setTimeout with delay function
                 }
             }
             
