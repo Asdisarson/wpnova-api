@@ -187,113 +187,206 @@ const scheduledTask = async (date = new Date()) => {
             let fileCounter = 0;
             let errorCounter = 0;
 
-            // Configure download behavior
+            // Ensure download directory exists
             const downloadPath = path.resolve('./public/downloads/');
-            await page._client.send('Page.setDownloadBehavior', {
-                behavior: 'allow',
-                downloadPath: downloadPath
-            });
+            if (!fs.existsSync(downloadPath)) {
+                fs.mkdirSync(downloadPath, { recursive: true });
+            }
+            
+            // Helper function to watch for new files in a directory
+            const watchForNewFile = (directoryPath, timeout = 120000) => {
+                return new Promise((resolve) => {
+                    // Get initial file list
+                    const initialFiles = new Set(fs.readdirSync(directoryPath));
+                    console.log(`Watching for new files in: ${directoryPath}`);
+                    console.log(`Initial files: ${Array.from(initialFiles).join(', ')}`);
+                    
+                    // Set up watcher
+                    const watcher = fs.watch(directoryPath, (eventType, filename) => {
+                        if (eventType === 'rename' && filename) {
+                            // Check if this is a new file
+                            if (!initialFiles.has(filename)) {
+                                const fullPath = path.join(directoryPath, filename);
+                                
+                                // Make sure file exists (wasn't deleted)
+                                if (fs.existsSync(fullPath)) {
+                                    console.log(`New file detected: ${filename}`);
+                                    watcher.close();
+                                    resolve({ path: fullPath, filename });
+                                }
+                            }
+                        }
+                    });
+                    
+                    // Set timeout in case no file appears
+                    setTimeout(() => {
+                        watcher.close();
+                        console.log(`No new files detected within ${timeout}ms`);
+                        resolve(null);
+                    }, timeout);
+                });
+            };
+            
+            // Helper function to wait for a file to finish downloading
+            const waitForFileToFinish = async (filePath, checkInterval = 1000, timeout = 60000) => {
+                return new Promise((resolve) => {
+                    let lastSize = 0;
+                    let unchangedCount = 0;
+                    
+                    const checkFile = setInterval(() => {
+                        try {
+                            const stats = fs.statSync(filePath);
+                            console.log(`File size: ${stats.size} bytes`);
+                            
+                            if (stats.size === lastSize) {
+                                unchangedCount++;
+                                
+                                // If size hasn't changed for 3 checks, assume download is complete
+                                if (unchangedCount >= 3) {
+                                    clearInterval(checkFile);
+                                    console.log(`File size stable at ${stats.size} bytes, download complete`);
+                                    resolve(true);
+                                }
+                            } else {
+                                // Reset counter if size has changed
+                                unchangedCount = 0;
+                                lastSize = stats.size;
+                            }
+                        } catch (err) {
+                            console.log(`Error checking file: ${err.message}`);
+                        }
+                    }, checkInterval);
+                    
+                    // Set a timeout in case the file size check gets stuck
+                    setTimeout(() => {
+                        clearInterval(checkFile);
+                        console.log(`Timeout reached, assuming download is complete`);
+                        resolve(false);
+                    }, timeout);
+                });
+            };
 
             for (let i = 0; i < data.length; i++) {
                 console.log(`Processing download ${i + 1} of ${data.length}: ${data[i].productName}...`);
                 try {
                     // Extract the slug for filename
                     var modifiedString = data[i].slug.replace(/-download$/, "");
-                    modifiedString = data[i].slug.replace(/download-/, "");
+                    modifiedString = modifiedString.replace(/download-/, "");
                     var filename = `${modifiedString}.zip`;
                     const filePath = path.join('./public/downloads/', filename);
+                    
+                    // Check if file already exists (to avoid redownloading)
+                    if (fs.existsSync(filePath)) {
+                        console.log(`File ${filename} already exists, skipping download`);
+                        data[i].filename = filename;
+                        data[i].filePath = filePath;
+                        data[i].fileUrl = path.join(process.env.DOWNLOAD_URL, filename);
+                        fileCounter++;
+                        list.push(data[i]);
+                        continue;
+                    }
 
                     // Navigate to the download page
                     console.log(`Navigating to download page for ${data[i].productName}...`);
                     await page.goto(data[i].productURL, { waitUntil: 'networkidle2' });
-
+                    
+                    // Start watching for new files before clicking the download button
+                    const fileWatcherPromise = watchForNewFile(downloadPath);
+                    
                     // Find and click the download button
                     console.log(`Looking for download button...`);
-                    
-                    // Wait for the download button to be available (adjust selector as needed)
-                    const downloadButton = await page.waitForSelector('.download-button, .woocommerce-Button, a.button, .wp-block-button__link, a[download], a[href*="download"]', { timeout: 30000 });
-                    
-                    // Setup file watcher to detect when download starts/completes
-                    const fileExistsPromise = new Promise((resolve) => {
-                        // Check if the file already exists before we start
-                        const preExistingFiles = fs.readdirSync(downloadPath);
-                        
-                        // Setup a file watcher on the download directory
-                        const watcher = fs.watch(downloadPath, (eventType, filename) => {
-                            if (eventType === 'rename' && filename) {
-                                const fullPath = path.join(downloadPath, filename);
-                                
-                                // Check if this is a new file
-                                if (!preExistingFiles.includes(filename) && fs.existsSync(fullPath)) {
-                                    console.log(`Download detected: ${filename}`);
-                                    watcher.close();
-                                    resolve(fullPath);
-                                }
-                            }
-                        });
-                        
-                        // Set a timeout in case the download takes too long
-                        setTimeout(() => {
-                            watcher.close();
-                            resolve(null);
-                        }, 120000); // 2 minutes timeout
-                    });
+                    const downloadButton = await page.waitForSelector(
+                        '.download-button, .woocommerce-Button, button.button, a.button, .wp-block-button__link, a[download], a[href*="download"]', 
+                        { timeout: 30000 }
+                    );
                     
                     // Click the download button
                     console.log(`Clicking download button for ${data[i].productName}...`);
-                    await downloadButton.click();
+                    await Promise.all([
+                        page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 }).catch(() => {}),
+                        downloadButton.click()
+                    ]);
                     
-                    // Wait for the download to be detected
+                    // Wait for a new file to appear in the downloads directory
                     console.log(`Waiting for download to start...`);
-                    const downloadedPath = await fileExistsPromise;
+                    const newFile = await fileWatcherPromise;
                     
-                    if (downloadedPath) {
-                        console.log(`Download detected at: ${downloadedPath}`);
+                    if (newFile) {
+                        console.log(`Download detected: ${newFile.filename}`);
                         
-                        // Wait for download to complete (check file size stabilization)
-                        await new Promise(resolve => {
-                            let lastSize = 0;
-                            const checkFileComplete = setInterval(() => {
-                                try {
-                                    const stats = fs.statSync(downloadedPath);
-                                    console.log(`Current file size: ${stats.size} bytes`);
-                                    
-                                    if (stats.size > 0 && stats.size === lastSize) {
-                                        clearInterval(checkFileComplete);
-                                        resolve();
-                                    }
-                                    lastSize = stats.size;
-                                } catch (err) {
-                                    console.log(`Error checking file: ${err.message}`);
-                                }
-                            }, 1000); // Check every second
-                            
-                            // Set a timeout in case the file size check gets stuck
-                            setTimeout(() => {
-                                clearInterval(checkFileComplete);
-                                resolve();
-                            }, 60000); // 1 minute timeout
-                        });
+                        // Wait for the download to complete
+                        console.log(`Waiting for download to complete...`);
+                        await waitForFileToFinish(newFile.path);
                         
                         // Rename the file if needed
-                        if (path.basename(downloadedPath) !== filename) {
-                            fs.renameSync(downloadedPath, filePath);
-                            console.log(`File renamed to ${filename}`);
+                        const targetFilePath = path.join(downloadPath, filename);
+                        if (newFile.path !== targetFilePath) {
+                            fs.renameSync(newFile.path, targetFilePath);
+                            console.log(`File renamed from ${newFile.filename} to ${filename}`);
                         }
                         
-                        // Update the titles array with the filename and file path
+                        // Update the data with file info
                         data[i].filename = filename;
-                        data[i].filePath = filePath;
+                        data[i].filePath = targetFilePath;
                         data[i].fileUrl = path.join(process.env.DOWNLOAD_URL, filename);
                         
-                        console.log('Download Successful: ', data[i].productName);
+                        console.log(`Download successful: ${data[i].productName}`);
                         fileCounter++;
                         list.push(data[i]);
                     } else {
-                        throw new Error('Download not detected within timeout period');
+                        console.log(`No download detected for ${data[i].productName}`);
+                        
+                        // Try one more approach - check if there's a direct download link
+                        try {
+                            console.log(`Looking for direct download link...`);
+                            const downloadLink = await page.evaluate(() => {
+                                // Try to find a download link
+                                const links = Array.from(document.querySelectorAll('a[href*=".zip"], a[href*=".rar"], a[href*=".tar"], a[href*=".gz"]'));
+                                return links.length > 0 ? links[0].href : null;
+                            });
+                            
+                            if (downloadLink) {
+                                console.log(`Found direct download link: ${downloadLink}`);
+                                
+                                // Download using Node.js
+                                const response = await axios({
+                                    url: downloadLink,
+                                    method: 'GET',
+                                    responseType: 'stream',
+                                    headers: {
+                                        'User-Agent': await page.evaluate(() => navigator.userAgent)
+                                    }
+                                });
+                                
+                                // Create write stream for the file
+                                const writer = fs.createWriteStream(filePath);
+                                
+                                // Pipe download to file and wait for completion
+                                await new Promise((resolve, reject) => {
+                                    response.data.pipe(writer);
+                                    writer.on('finish', resolve);
+                                    writer.on('error', reject);
+                                });
+                                
+                                console.log(`Direct download successful: ${data[i].productName}`);
+                                
+                                // Update the data with file info
+                                data[i].filename = filename;
+                                data[i].filePath = filePath;
+                                data[i].fileUrl = path.join(process.env.DOWNLOAD_URL, filename);
+                                
+                                fileCounter++;
+                                list.push(data[i]);
+                            } else {
+                                throw new Error('No direct download link found');
+                            }
+                        } catch (directErr) {
+                            console.error(`Direct download approach failed: ${directErr.message}`);
+                            throw new Error('Download not detected and direct download failed');
+                        }
                     }
                     
-                    // Wait a moment before the next download to avoid overwhelming the server
+                    // Wait a moment before the next download
                     await page.waitForTimeout(2000);
                 } catch (e) {
                     errorCounter++;
