@@ -80,6 +80,8 @@ const watchForNewFile = (directoryPath, timeout = 120000) => {
         
         // Track .crdownload files
         const crdownloadFiles = new Set();
+        // Track which files we've already logged to prevent duplicate messages
+        const loggedFiles = new Set();
         
         // Set up watcher
         const watcher = fs.watch(directoryPath, (eventType, filename) => {
@@ -89,11 +91,16 @@ const watchForNewFile = (directoryPath, timeout = 120000) => {
             
             // Check if this is a Chrome temporary download file
             if (filename.endsWith('.crdownload')) {
-                console.log(`Chrome download started: ${filename}`);
-                crdownloadFiles.add({
-                    tempPath: fullPath,
-                    expectedFinalPath: path.join(directoryPath, filename.replace('.crdownload', ''))
-                });
+                // Only log if we haven't seen this file before
+                if (!loggedFiles.has(filename)) {
+                    console.log(`Chrome download started: ${filename}`);
+                    loggedFiles.add(filename);
+                    
+                    crdownloadFiles.add({
+                        tempPath: fullPath,
+                        expectedFinalPath: path.join(directoryPath, filename.replace('.crdownload', ''))
+                    });
+                }
                 // Don't resolve yet, wait for the final file
                 return;
             }
@@ -430,7 +437,13 @@ const scheduledTask = async (date = new Date()) => {
                                 downloadLink,
                                 productURL,
                                 isLocked,
-                                isUnlocked
+                                isUnlocked,
+                                // Initialize these fields to ensure they're always present in the CSV
+                                version: '',
+                                slug: '',
+                                fileUrl: '',
+                                filename: '',
+                                filePath: ''
                             };
 
                             rowDataArray.push(rowData); }
@@ -458,36 +471,82 @@ const scheduledTask = async (date = new Date()) => {
                     let slug = '';
                     let productId = '';
                     try {
-                        let version = text.match(/v\d+(\.\d+){0,3}/)[0];
-
-                        // Remove 'v' from version
-                        versionWithoutV = version.replace('v', '');
-                        // Remove version from title
-                        textWithoutVersion = text.replace(/ v\d+(\.\d+){0,3}/, '');
-
+                        // Match version pattern: v1.2.3 or v1.2 or v1
+                        let versionMatch = text.match(/v\d+(\.\d+){0,3}/);
+                        if (versionMatch) {
+                            let version = versionMatch[0];
+                            
+                            // Remove 'v' from version
+                            versionWithoutV = version.replace('v', '');
+                            // Remove version from title
+                            textWithoutVersion = text.replace(/ v\d+(\.\d+){0,3}/, '');
+                        } else {
+                            // No version found in the pattern v1.2.3, try looking for numbers
+                            let numberMatch = text.match(/\s\d+(\.\d+){0,3}/);
+                            if (numberMatch) {
+                                versionWithoutV = numberMatch[0].trim();
+                                textWithoutVersion = text.replace(numberMatch[0], '');
+                            } else {
+                                // No version pattern found
+                                versionWithoutV = '';
+                                textWithoutVersion = text;
+                            }
+                        }
                     } catch (e) {
-                        console.log(e);
+                        console.log(`Error extracting version: ${e.message}`);
+                        versionWithoutV = '';
+                        textWithoutVersion = text;
                     }
+                    
                     url = data[i].productURL;
                     try {
+                        if (url) {
+                            let parsedUrl = new URL(url);
+                            url = url.replace(/^\/|\/$/g, '');
 
-                        let parsedUrl = new URL(url);
-                        url = url.replace(/^\/|\/$/g, '');
-
-                        // Get the last part of the URL after the last slash
-                        let parts = url.split('/');
-                        slug = parts[parts.length - 1];// Extract the slug from the URL
-                        productId = parsedUrl.searchParams.get("product_id");
+                            // Get the last part of the URL after the last slash
+                            let parts = url.split('/');
+                            slug = parts[parts.length - 1];// Extract the slug from the URL
+                            
+                            // Clean up the slug
+                            slug = slug.replace(/-download$/, "").replace(/download-/, "");
+                            
+                            productId = parsedUrl.searchParams.get("product_id");
+                        }
                     } catch (e) {
-                        console.log(e);
-                    }// Get the product_id parameter value
+                        console.log(`Error extracting slug: ${e.message}`);
+                        // Create a slug from the product name if URL extraction fails
+                        slug = textWithoutVersion.toLowerCase()
+                            .replace(/[^\w\s-]/g, '')
+                            .replace(/\s+/g, '-')
+                            .replace(/-+/g, '-')
+                            .replace(/^-+|-+$/g, '');
+                    }
+                    
+                    // Always set these fields
                     data[i].version = versionWithoutV;
                     data[i].name = textWithoutVersion;
                     data[i].slug = slug;
                     data[i].filename = '';
                     data[i].filePath = '';
-                    data[i].productId = productId;
-
+                    data[i].fileUrl = '';
+                    data[i].productId = productId || '';
+                } else {
+                    // No version number found, set defaults
+                    data[i].version = '';
+                    data[i].name = text;
+                    
+                    // Create a slug from the product name
+                    data[i].slug = text.toLowerCase()
+                        .replace(/[^\w\s-]/g, '')
+                        .replace(/\s+/g, '-')
+                        .replace(/-+/g, '-')
+                        .replace(/^-+|-+$/g, '');
+                        
+                    data[i].filename = '';
+                    data[i].filePath = '';
+                    data[i].fileUrl = '';
+                    data[i].productId = '';
                 }
             }
             console.log('Data processing completed.');
@@ -723,6 +782,36 @@ const scheduledTask = async (date = new Date()) => {
                 return err;
             }
             try{
+                // Verify all required fields are present
+                console.log('Verifying all required fields before CSV generation...');
+                list.forEach((item, index) => {
+                    // Ensure version is in column 6 (index 5)
+                    if (typeof item.version === 'undefined') {
+                        console.log(`Adding missing version field for item ${index}`);
+                        item.version = '';
+                    }
+                    
+                    // Ensure slug is in column 8 (index 7)
+                    if (typeof item.slug === 'undefined') {
+                        console.log(`Adding missing slug field for item ${index}`);
+                        if (item.filename) {
+                            item.slug = item.filename.replace(/\.zip$/, '');
+                        } else {
+                            item.slug = '';
+                        }
+                    }
+                    
+                    // Ensure fileUrl is in column 9 (index 8)
+                    if (typeof item.fileUrl === 'undefined') {
+                        console.log(`Adding missing fileUrl field for item ${index}`);
+                        if (item.filename) {
+                            item.fileUrl = `${process.env.DOWNLOAD_URL}/${item.filename}`;
+                        } else {
+                            item.fileUrl = '';
+                        }
+                    }
+                });
+                
                 db.JSON(list);
                 db.sync();
                 touch('data.csv');
@@ -1451,6 +1540,26 @@ const downloadAllFiles = async (date = new Date()) => {
                     row.fileUrl = `${process.env.DOWNLOAD_URL}/${finalArchiveFilename}`;
                     row.downloadedFiles = downloadedFiles.length;
                     
+                    // Ensure required fields are set even if they weren't extracted earlier
+                    if (!row.version && row.productName) {
+                        // Try to extract version from product name
+                        try {
+                            const versionMatch = row.productName.match(/v\d+(\.\d+){0,3}/);
+                            if (versionMatch) {
+                                row.version = versionMatch[0].replace('v', '');
+                            } else {
+                                row.version = ''; // Set empty if no version found
+                            }
+                        } catch (e) {
+                            row.version = '';
+                        }
+                    }
+                    
+                    if (!row.slug && finalArchiveFilename) {
+                        // Extract slug from filename if not set
+                        row.slug = finalArchiveFilename.replace(/\.zip$/, '');
+                    }
+                    
                     // Add to download history
                     downloadHistory.set(productIdentifier, {
                         id: row.id,
@@ -1556,6 +1665,36 @@ const downloadAllFiles = async (date = new Date()) => {
             }
             
             try {
+                // Verify all required fields are present
+                console.log('Verifying all required fields for downloadAllFiles before CSV generation...');
+                list.forEach((item, index) => {
+                    // Ensure version is in column 6 (index 5)
+                    if (typeof item.version === 'undefined') {
+                        console.log(`Adding missing version field for item ${index}`);
+                        item.version = '';
+                    }
+                    
+                    // Ensure slug is in column 8 (index 7)
+                    if (typeof item.slug === 'undefined') {
+                        console.log(`Adding missing slug field for item ${index}`);
+                        if (item.filename) {
+                            item.slug = item.filename.replace(/\.zip$/, '');
+                        } else {
+                            item.slug = '';
+                        }
+                    }
+                    
+                    // Ensure fileUrl is in column 9 (index 8)
+                    if (typeof item.fileUrl === 'undefined') {
+                        console.log(`Adding missing fileUrl field for item ${index}`);
+                        if (item.filename) {
+                            item.fileUrl = `${process.env.DOWNLOAD_URL}/${item.filename}`;
+                        } else {
+                            item.fileUrl = '';
+                        }
+                    }
+                });
+                
                 db.JSON(list);
                 db.sync();
                 touch('data.csv');
