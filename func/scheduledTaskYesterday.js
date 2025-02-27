@@ -132,7 +132,7 @@ const watchForNewFile = (directoryPath, timeout = 120000) => {
         });
         
         // Set timeout in case no file appears
-        setTimeout(() => {
+        const timeoutId = setTimeout(() => {
             watcher.close();
             
             // Check if any previously seen .crdownload files completed
@@ -149,32 +149,59 @@ const watchForNewFile = (directoryPath, timeout = 120000) => {
             }
             
             // Do a final check for any new files by comparing against initial list
-            const currentFiles = new Set();
-            fs.readdirSync(directoryPath).forEach(file => {
-                try {
-                    const filePath = path.join(directoryPath, file);
-                    if (fs.statSync(filePath).isFile() && 
-                        !file.endsWith('.crdownload') && 
-                        !file.endsWith('.tmp') && 
-                        !initialFiles.has(file)) {
-                        
-                        currentFiles.add(file);
+            try {
+                const currentFiles = new Set();
+                fs.readdirSync(directoryPath).forEach(file => {
+                    try {
+                        const filePath = path.join(directoryPath, file);
+                        if (fs.statSync(filePath).isFile() && 
+                            !file.endsWith('.crdownload') && 
+                            !file.endsWith('.tmp') && 
+                            !initialFiles.has(file)) {
+                            
+                            currentFiles.add(file);
+                        }
+                    } catch (err) {
+                        console.error(`Error in final check for ${file}:`, err);
                     }
-                } catch (err) {
-                    console.error(`Error in final check for ${file}:`, err);
+                });
+                
+                if (currentFiles.size === 1) {
+                    // If exactly one new file, assume it's our download
+                    const newFile = [...currentFiles][0];
+                    const fullPath = path.join(directoryPath, newFile);
+                    console.log(`Found one new file in final check: ${newFile}`);
+                    resolve({ path: fullPath, filename: newFile });
+                    return;
+                } else if (currentFiles.size > 1) {
+                    // If multiple new files, log but we can't determine which is ours
+                    console.log(`Found ${currentFiles.size} new files in final check, can't determine which is the target`);
+                    // Pick the newest file by modification time
+                    let newestFile = null;
+                    let newestTime = 0;
+                    
+                    for (const file of currentFiles) {
+                        const filePath = path.join(directoryPath, file);
+                        try {
+                            const stats = fs.statSync(filePath);
+                            if (stats.mtimeMs > newestTime) {
+                                newestTime = stats.mtimeMs;
+                                newestFile = file;
+                            }
+                        } catch (err) {
+                            console.error(`Error checking modification time for ${file}:`, err);
+                        }
+                    }
+                    
+                    if (newestFile) {
+                        const fullPath = path.join(directoryPath, newestFile);
+                        console.log(`Using newest file as download: ${newestFile}`);
+                        resolve({ path: fullPath, filename: newestFile });
+                        return;
+                    }
                 }
-            });
-            
-            if (currentFiles.size === 1) {
-                // If exactly one new file, assume it's our download
-                const newFile = [...currentFiles][0];
-                const fullPath = path.join(directoryPath, newFile);
-                console.log(`Found one new file in final check: ${newFile}`);
-                resolve({ path: fullPath, filename: newFile });
-                return;
-            } else if (currentFiles.size > 1) {
-                // If multiple new files, log but we can't determine which is ours
-                console.log(`Found ${currentFiles.size} new files in final check, can't determine which is the target`);
+            } catch (err) {
+                console.error(`Error in final file check: ${err.message}`);
             }
             
             console.log(`No new files detected within ${timeout}ms`);
@@ -195,6 +222,14 @@ const waitForFileToFinish = async (filePath, checkInterval = 1000, timeout = 600
         
         const checkFile = setInterval(() => {
             try {
+                // Check if file exists before attempting to stat it
+                if (!fs.existsSync(filePath)) {
+                    console.log(`File no longer exists at path: ${filePath}`);
+                    clearInterval(checkFile);
+                    resolve(false);
+                    return;
+                }
+                
                 const stats = fs.statSync(filePath);
                 const currentTime = Date.now();
                 const timeDiff = (currentTime - lastCheckTime) / 1000; // in seconds
@@ -242,6 +277,13 @@ const waitForFileToFinish = async (filePath, checkInterval = 1000, timeout = 600
                 }
             } catch (err) {
                 console.log(`Error checking file: ${err.message}`);
+                // If we can't access the file several times, abort
+                unchangedCount++;
+                if (unchangedCount >= 5) {
+                    clearInterval(checkFile);
+                    console.log(`Too many errors checking file, assuming download failed`);
+                    resolve(false);
+                }
             }
         }, checkInterval);
         
@@ -639,7 +681,7 @@ const scheduledTask = async (date = new Date()) => {
                     }
                     
                     // Wait a moment before the next download
-                    await page.waitForTimeout(2000);
+                    await new Promise(resolve => setTimeout(resolve, 2000));
                 } catch (e) {
                     errorCounter++;
                     console.error(`Failed to download: ${data[i].productName}`);
@@ -1319,16 +1361,13 @@ const downloadAllFiles = async () => {
                                         await pipeline(response.data, writer);
                                         console.log(`Direct download complete: ${formatBytes(downloadedBytes)}`);
                                         
-                                        // Create an artificial file event
-                                        const fakePath = downloadFilePath;
-                                        const fakeFilename = path.basename(downloadFilePath);
-                                        
                                         // Move to the correct location with the right name
-                                        fs.renameSync(fakePath, buttonFilePath);
+                                        fs.renameSync(downloadFilePath, buttonFilePath);
+                                        console.log(`File moved to: ${buttonFilePath}`);
                                         
                                         // Add to downloaded files list
                                         downloadedFiles.push({
-                                            originalPath: fakePath,
+                                            originalPath: downloadFilePath,
                                             tempPath: buttonFilePath,
                                             filename: buttonFilename,
                                             buttonName: buttonName,
@@ -1367,23 +1406,28 @@ const downloadAllFiles = async () => {
                                     });
                                     
                                     // Enable request interception for better handling
-                                    await newPage.setRequestInterception(true);
-                                    newPage.on('request', async (request) => {
-                                        // If it's a download type, don't abort
-                                        if (request.resourceType() === 'document' || 
-                                            request.resourceType() === 'fetch' || 
-                                            request.resourceType() === 'xhr') {
-                                            request.continue();
-                                        } else if (
-                                            request.url().includes('.zip') || 
-                                            request.url().includes('.rar') || 
-                                            request.url().includes('.gz')) {
-                                            console.log(`Detected download URL: ${request.url()}`);
-                                            request.continue();
-                                        } else {
-                                            request.continue();
-                                        }
-                                    });
+                                    try {
+                                        await newPage.setRequestInterception(true);
+                                        newPage.on('request', async (request) => {
+                                            // If it's a download type, don't abort
+                                            if (request.resourceType() === 'document' || 
+                                                request.resourceType() === 'fetch' || 
+                                                request.resourceType() === 'xhr') {
+                                                request.continue();
+                                            } else if (
+                                                request.url().includes('.zip') || 
+                                                request.url().includes('.rar') || 
+                                                request.url().includes('.gz')) {
+                                                console.log(`Detected download URL: ${request.url()}`);
+                                                request.continue();
+                                            } else {
+                                                request.continue();
+                                            }
+                                        });
+                                    } catch (interceptErr) {
+                                        console.error(`Error setting up request interception: ${interceptErr.message}`);
+                                        // Continue without interception
+                                    }
                                     
                                     try {
                                         // Navigate to the download URL in the new tab with a longer timeout
@@ -1424,18 +1468,22 @@ const downloadAllFiles = async () => {
                                         
                                         // Wait a longer time for download to start
                                         console.log('Waiting longer for download to initiate...');
-                                        await newPage.waitForTimeout(10000);
+                                        await new Promise(resolve => setTimeout(resolve, 10000));
                                         
                                         // Keep the tab open longer to ensure download starts
                                         console.log('Keeping tab open to ensure download starts...');
-                                        await newPage.waitForTimeout(5000);
+                                        await new Promise(resolve => setTimeout(resolve, 5000));
                                         
                                         // Close the tab after allowing download to start
                                         await newPage.close();
                                         
                                     } catch (tabError) {
                                         console.error(`Error in new tab: ${tabError.message}`);
-                                        await newPage.close();
+                                        try {
+                                            await newPage.close();
+                                        } catch (closeErr) {
+                                            console.error(`Error closing page: ${closeErr.message}`);
+                                        }
                                         // Continue to file watcher to see if download started anyway
                                     }
                                 }
@@ -1521,6 +1569,58 @@ const downloadAllFiles = async () => {
                                 
                             } catch (downloadErr) {
                                 console.error(`Error during download: ${downloadErr.message}`);
+                                // If there was an error during download, try to download directly with axios
+                                try {
+                                    console.log(`Attempting last-resort direct download via axios...`);
+                                    const response = await axios({
+                                        url: downloadSuccess.href,
+                                        method: 'GET',
+                                        responseType: 'stream',
+                                        headers: {
+                                            'User-Agent': await page.evaluate(() => navigator.userAgent),
+                                            'Cookie': await page.evaluate(() => document.cookie)
+                                        },
+                                        maxRedirects: 5,
+                                        timeout: 60000
+                                    });
+                                    
+                                    // Create a temp file in the downloads directory
+                                    const downloadFilePath = path.join(downloadPath, `final-backup-${Date.now()}.zip`);
+                                    const writer = fs.createWriteStream(downloadFilePath);
+                                    
+                                    // Setup file writing
+                                    console.log(`Writing backup download to: ${downloadFilePath}`);
+                                    let downloadedBytes = 0;
+                                    
+                                    response.data.on('data', (chunk) => {
+                                        downloadedBytes += chunk.length;
+                                        if (downloadedBytes % 1048576 === 0) { // Log every 1MB
+                                            console.log(`Downloaded: ${formatBytes(downloadedBytes)}`);
+                                        }
+                                    });
+                                    
+                                    // Pipe download to file and wait for completion
+                                    await pipeline(response.data, writer);
+                                    console.log(`Last-resort download complete: ${formatBytes(downloadedBytes)}`);
+                                    
+                                    // Move to the correct location with the right name
+                                    fs.renameSync(downloadFilePath, buttonFilePath);
+                                    console.log(`File moved to: ${buttonFilePath}`);
+                                    
+                                    // Add to downloaded files list
+                                    downloadedFiles.push({
+                                        originalPath: downloadFilePath,
+                                        tempPath: buttonFilePath,
+                                        filename: buttonFilename,
+                                        buttonName: buttonName,
+                                        size: fs.statSync(buttonFilePath).size,
+                                        sizeFormatted: formatBytes(fs.statSync(buttonFilePath).size)
+                                    });
+                                    
+                                    totalDownloadedFiles++;
+                                } catch (axiosLastErr) {
+                                    console.error(`Last-resort download failed: ${axiosLastErr.message}`);
+                                }
                             }
                             
                             // Ensure we're back on the changelog page for next download
