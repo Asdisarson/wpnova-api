@@ -7,7 +7,7 @@ var logger = require('morgan');
 const fs = require('fs');
 const dbJson = require('simple-json-db')
 const scheduledTask = require('./func/scheduledTask');
-const scheduledTaskYesterday = require('./func/scheduledTaskYesterday'); // Import the scheduled task
+const { downloadAllFiles } = require('./func/scheduledTaskYesterday'); // Import the optimized function
 var date = new Date();
 var app = express();
 app.use(logger('dev'));
@@ -36,19 +36,24 @@ app.use('/refresh', async(req,res) => {
         date = new Date(req.query.date);
     }
     console.log(date);
-    scheduledTaskYesterday(date).then(downloads => {
-
-
-            executeAfterAnHour();
-            return res.status(200).json({
-                message: 'Downloadable Files',
-                files: downloads
-            })
-        }).catch(error => {
-            executeAfterAnHour();
-            return res.status(503).json({message: 'Something is Wrong '});
+    
+    // Use the optimized downloadAllFiles function for better performance
+    downloadAllFiles().then(result => {
+        executeAfterAnHour();
+        return res.status(200).json({
+            message: 'Downloadable Files',
+            files: result.successList ? result.successList.length : 0,
+            downloaded: result.downloadedCount,
+            skipped: result.skippedCount
         });
-
+    }).catch(error => {
+        console.error('Error in download process:', error);
+        executeAfterAnHour();
+        return res.status(503).json({
+            message: 'Something is Wrong',
+            error: error.message
+        });
+    });
 });
 
 // New endpoint to download all files from changelog

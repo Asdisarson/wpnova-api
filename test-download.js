@@ -5,11 +5,20 @@ const SimpleJsonDb = require('simple-json-db');
 const path = require('path');
 const fs = require('fs');
 
-// Set NODE_ENV to development for testing
-process.env.NODE_ENV = 'development';
+// Set NODE_ENV to development for testing by default, can be overridden when calling the script
+// To test in production mode: NODE_ENV=production node test-download.js
+if (!process.env.NODE_ENV) {
+  process.env.NODE_ENV = 'development';
+}
 
-console.log('Starting test download in development mode...');
-console.log('This will download and zip files from up to 2 products');
+const mode = process.env.NODE_ENV === 'development' ? 'development' : 'production';
+console.log(`Starting test download in ${mode} mode...`);
+
+if (mode === 'development') {
+  console.log('This will download and zip files from up to 2 products');
+} else {
+  console.log('This will download and zip files from ALL available products');
+}
 
 // Check download directory status before starting
 const downloadsDir = path.resolve('./public/downloads/');
