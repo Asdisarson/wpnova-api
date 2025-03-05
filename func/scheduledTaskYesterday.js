@@ -16,52 +16,6 @@ const DOWNLOAD_URL = process.env.DOWNLOAD_URL ?
     '/' + process.env.DOWNLOAD_URL.replace(/^\/+|\/+$/g, '') : // Remove leading and trailing slashes, then add a single leading slash
     '/downloads';
 
-// Set up scheduled cleanup for temp files
-const setupScheduledTempCleanup = () => {
-    console.log('Setting up scheduled temp file cleanup...');
-    
-    // Run cleanup initially
-    setTimeout(() => {
-        console.log('Running initial temp cleanup...');
-        cleanupAllTemporaryFiles()
-            .then(() => console.log('Initial cleanup completed'))
-            .catch(err => console.error('Error in initial cleanup:', err));
-    }, 5 * 60 * 1000); // Run 5 minutes after startup
-    
-    // Set up interval to run cleanup every hour
-    setInterval(() => {
-        console.log('Running scheduled hourly temp cleanup...');
-        cleanupAllTemporaryFiles()
-            .then(() => console.log('Hourly cleanup completed'))
-            .catch(err => console.error('Error in hourly cleanup:', err));
-    }, 60 * 60 * 1000); // Run every hour
-    
-    // Set up interval to recreate Chrome user data directory every 3 hours
-    setInterval(() => {
-        console.log('Recreating Chrome user data directory...');
-        recreateUserDataDir()
-            .then(success => console.log(success ? 'Chrome user data directory recreated' : 'Failed to recreate Chrome user data directory'))
-            .catch(err => console.error('Error recreating Chrome user data directory:', err));
-    }, 3 * 60 * 60 * 1000); // Run every 3 hours
-};
-
-// Run cleanup immediately on script start
-console.log('Running immediate startup cleanup...');
-// This will be executed right away, but we need to wait for the cleanupAllTemporaryFiles function to be defined
-// So we'll use setTimeout with a delay of 0 to push this to the end of the event loop
-setTimeout(() => {
-    if (typeof cleanupAllTemporaryFiles === 'function') {
-        cleanupAllTemporaryFiles()
-            .then(() => console.log('Startup cleanup completed'))
-            .catch(err => console.error('Error in startup cleanup:', err));
-    } else {
-        console.log('cleanupAllTemporaryFiles function not available yet, will rely on scheduled cleanup');
-    }
-}, 0);
-
-// Initialize the scheduled cleanup
-setupScheduledTempCleanup();
-
 // Add a universal delay function that works with any Puppeteer version
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -182,16 +136,6 @@ const watchForNewFile = (directoryPath, timeout = 120000) => {
                     for (const crdownload of crdownloadFiles) {
                         if (fullPath === crdownload.expectedFinalPath) {
                             console.log(`Chrome download completed: ${filename}`);
-                            
-                            // Increment download counter and trigger cleanup after every X downloads
-                            downloadCounter++;
-                            if (downloadCounter % CLEANUP_FREQUENCY === 0) {
-                                console.log(`Reached ${downloadCounter} downloads, triggering cleanup...`);
-                                cleanupOldTempDirectories(1) // Clean temp dirs older than 1 hour
-                                    .then(() => console.log('Download batch cleanup completed'))
-                                    .catch(err => console.error('Error in download batch cleanup:', err));
-                            }
-                            
                             watcher.close();
                             resolve({ 
                                 path: crdownload.expectedFinalPath, 
@@ -371,133 +315,595 @@ const waitForFileToFinish = async (filePath, checkInterval = 100, timeout = 6000
     });
 };
 
-// Add scheduled cleanup that runs at intervals
-let tempCleanupInterval;
-
-// Function to start periodic temp cleanup
-const startPeriodicTempCleanup = (intervalMinutes = 30) => {
-    console.log(`Starting periodic temp file cleanup (every ${intervalMinutes} minutes)`);
-    
-    // Run immediately on start
-    (async () => {
-        console.log('Running initial temp cleanup...');
-        await cleanupOldTempDirectories(2); // Initially clean temp directories older than 2 hours
-    })();
-    
-    // Set up interval for future cleanups
-    tempCleanupInterval = setInterval(async () => {
-        console.log('Running scheduled temp cleanup...');
-        await cleanupOldTempDirectories(2); // Clean temp directories older than 2 hours during runtime
-    }, intervalMinutes * 60 * 1000);
-};
-
-// Function to stop periodic cleanup
-const stopPeriodicTempCleanup = () => {
-    if (tempCleanupInterval) {
-        console.log('Stopping periodic temp file cleanup');
-        clearInterval(tempCleanupInterval);
-        tempCleanupInterval = null;
-    }
-};
-
-// First declare the original functions and store references to them
-let scheduledTask_original;
-let downloadAllFiles_original;
-
-// Define the original functions directly without the references
 const scheduledTask = async (date = new Date()) => {
-    // Original implementation here
-    console.log('Running original scheduled task...');
-    
-    // Original implementation would go here
-    // For now, as a placeholder:
-    await delay(1000); // simulate work
-    return { 
-        status: "completed",
-        date: date.toISOString()
-    };
-};
-
-const downloadAllFiles = async (date = new Date()) => {
-    // Original implementation here
-    console.log('Running original download all files...');
-    
-    // Original implementation would go here
-    // For now, as a placeholder:  
-    await delay(1000); // simulate work
-    return { 
-        status: "completed",
-        date: date.toISOString()
-    };
-};
-
-// Create wrapped versions that add cleanup
-const scheduledTaskWithCleanup = async (date = new Date()) => {
+    const dbPath = path.join(__dirname, 'files.json');
+    ensureDirectoryExistence(dbPath);
+    const db = new JSONdb(dbPath);
+    db.JSON({});
+    let list = [];
+    let error = [];
     try {
-        // Run cleanup at the beginning
-        console.log('Cleaning up before starting task...');
-        await cleanupAllTemporaryFiles();
-        
-        // Start periodic cleanup
-        startPeriodicTempCleanup(30); // Run every 30 minutes
-        
-        // Run the original function
-        const result = await scheduledTask(date);
-        
-        // Clean up again at the end
-        console.log('Task completed, doing final cleanup...');
-        await cleanupAllTemporaryFiles();
-        
-        // Stop the periodic cleanup
-        stopPeriodicTempCleanup();
-        
-        return result;
-    } catch (err) {
-        console.error('Error in scheduledTask:', err);
-        
-        // Clean up even if there's an error
-        await cleanupAllTemporaryFiles();
-        stopPeriodicTempCleanup();
-        
-        throw err;
-    }
-};
+        // Ensure download directory exists
+        const downloadPath = path.resolve('./public/downloads/');
+        if (!fs.existsSync(downloadPath)) {
+            fs.mkdirSync(downloadPath, { recursive: true });
+            touch('index.html');
+        }
 
-// Similarly define the enhanced downloadAllFiles function
-const downloadAllFilesWithCleanup = async (date = new Date()) => {
-    try {
-        // Run cleanup at the beginning
-        console.log('Cleaning up before starting downloads...');
-        await cleanupAllTemporaryFiles();
-        
-        // Start periodic cleanup
-        startPeriodicTempCleanup(15); // Run every 15 minutes for downloads
-        
-        // Run the improved function
-        const result = await downloadAllFiles(date);
-        
-        // Clean up again at the end
-        console.log('Downloads completed, doing final cleanup...');
-        await cleanupAllTemporaryFiles();
-        
-        // Stop the periodic cleanup
-        stopPeriodicTempCleanup();
-        
-        return result;
-    } catch (err) {
-        console.error('Error in downloadAllFiles:', err);
-        
-        // Clean up even if there's an error
-        await cleanupAllTemporaryFiles();
-        stopPeriodicTempCleanup();
-        
-        throw err;
-    }
-};
+        // Launch Puppeteer browser
+        console.log('Launching Puppeteer browser...');
+        const browser = await puppeteer.launch({
+            headless: true,
+            args: ['--no-sandbox', '--disable-setuid-sandbox'],
+            defaultViewport: null,
+            // Explicitly set download preferences to prevent using system Downloads folder
+            userDataDir: path.join(process.cwd(), 'temp_user_data')
+        });
 
-// Replace the original exports with the wrapped versions
-module.exports = scheduledTaskWithCleanup;
-module.exports.downloadAllFiles = downloadAllFilesWithCleanup;
+        // Create a new page
+        const page = await browser.newPage();
+        page.setDefaultTimeout(0);
+
+        // Set download behavior using CDP (Chrome DevTools Protocol)
+        const client = await page.target().createCDPSession();
+        await client.send('Page.setDownloadBehavior', {
+            behavior: 'allow',
+            downloadPath: path.resolve('./public/downloads/')
+        });
+
+        // Also set download preferences via page.evaluateOnNewDocument
+        await page.evaluateOnNewDocument((downloadPath) => {
+            // This runs in the browser context
+            Object.defineProperty(navigator, 'plugins', {
+                get: function() {
+                    return {
+                        length: 0,
+                        refresh: function() {}
+                    };
+                }
+            });
+            
+            // Try to override Chrome's download settings
+            if (window.chrome && chrome.runtime && chrome.runtime.sendMessage) {
+                chrome.runtime.sendMessage({
+                    type: 'DOWNLOAD_SETTINGS',
+                    downloadPath: downloadPath,
+                    prompt: false
+                });
+            }
+        }, path.resolve('./public/downloads/'));
+
+        try {
+            // Go to the login page
+            console.log('Going to the login page...');
+            await page.goto('https://www.realgpl.com/my-account/');
+
+            try {
+                //consent label
+                await Promise.all([
+                    page.click('.fc-button-label'),
+                ]);
+            } catch (error) {
+                console.log('No Consent block')
+            }
+
+            var username =  process.env.USERNAME;
+            var password = process.env.PASSWORD;
+            // Fill in the login credentials
+            console.log('Typing username...');
+
+            await page.type('#username',username.toString());
+
+            console.log('Typing password...');
+            await page.type('#password',password.toString());
+
+            console.log('Clicking the login button...');
+               await Promise.all([
+                   page.waitForNavigation(),
+                   page.click('.button.woocommerce-button.woocommerce-form-login__submit'),
+               ]);
+
+            // Go to the changelog page
+            console.log('Going to the changelog page...');
+            await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=250', { waitUntil: 'networkidle2' });
+                console.log(date)
+            console.log('Changelog page...');
+
+            // Flag to track if we're on the changelog page
+            let isOnChangelogPage = true;
+
+            var theDate = new Date(date).toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+            });
+            console.log(theDate);
+            const data = await page.evaluate((theDate) => {
+                const rows = document.querySelectorAll('tr.awcpt-row');
+                const rowDataArray = [];
+
+                for (const row of rows) {
+                    var date = row.querySelector('.awcpt-date').innerText;
+                    // This determines date of the update
+                    if (theDate === date) {
+                        try {
+                            const id = row.getAttribute('data-id');
+                            const productName = row.querySelector('.awcpt-title').innerText;
+                            const downloadLink = row.querySelector('.awcpt-shortcode-wrap a').getAttribute('href');
+                            const downloadButtonClass = row.querySelector('.awcpt-shortcode-wrap a').className;
+                            const productURL = row.querySelector('.awcpt-prdTitle-col a').getAttribute('href');
+                            const isLocked = downloadButtonClass.includes('locked');
+                            const isUnlocked = downloadButtonClass.includes('unlocked');
+
+                            // Create an object with the extracted data for each row
+                            const rowData = {
+                                id,
+                                productName,
+                                date,
+                                downloadLink,
+                                productURL,
+                                isLocked,
+                                isUnlocked,
+                                // Initialize these fields to ensure they're always present in the CSV
+                                version: '',
+                                slug: '',
+                                fileUrl: '',
+                                filename: '',
+                                filePath: ''
+                            };
+
+                            rowDataArray.push(rowData); }
+                        catch (e) {
+                            console.error(e);
+                        }
+                    }
+
+                }
+                return rowDataArray;
+            }, theDate);
+
+            console.log('Changelog entries for ', theDate);
+            console.log(data);
+
+            // Process each title and extract relevant information
+            for (let i = 0; i < data.length; i++) {
+                let text = data[i].productName;
+
+                // Extract version
+                if (/\d/.test(text)) {
+                    let url = '';
+                    let versionWithoutV = '';
+                    let textWithoutVersion = '';
+                    let slug = '';
+                    let productId = '';
+                    try {
+                        // Match version pattern: v1.2.3 or v1.2 or v1
+                        let versionMatch = text.match(/v\d+(\.\d+){0,3}/);
+                        if (versionMatch) {
+                            let version = versionMatch[0];
+                            
+                            // Remove 'v' from version
+                            versionWithoutV = version.replace('v', '');
+                            // Remove version from title
+                            textWithoutVersion = text.replace(/ v\d+(\.\d+){0,3}/, '');
+                        } else {
+                            // No version found in the pattern v1.2.3, try looking for numbers
+                            let numberMatch = text.match(/\s\d+(\.\d+){0,3}/);
+                            if (numberMatch) {
+                                versionWithoutV = numberMatch[0].trim();
+                                textWithoutVersion = text.replace(numberMatch[0], '');
+                            } else {
+                                // No version pattern found
+                                versionWithoutV = '';
+                                textWithoutVersion = text;
+                            }
+                        }
+                    } catch (e) {
+                        console.log(`Error extracting version: ${e.message}`);
+                        versionWithoutV = '';
+                        textWithoutVersion = text;
+                    }
+                    
+                    url = data[i].productURL;
+                    try {
+                        if (url) {
+                            let parsedUrl = new URL(url);
+                            url = url.replace(/^\/|\/$/g, '');
+
+                            // Get the last part of the URL after the last slash
+                            let parts = url.split('/');
+                            slug = parts[parts.length - 1];// Extract the slug from the URL
+                            
+                            // Clean up the slug - keep only the actual product slug from the Real GPL URL
+                            // Remove any query parameters
+                            slug = slug.split('?')[0];
+                            // Keep the full slug as is, including "download-" prefix - don't modify the product identifier
+                            
+                            productId = parsedUrl.searchParams.get("product_id");
+                        }
+                    } catch (e) {
+                        console.log(`Error extracting slug: ${e.message}`);
+                        // If we can't extract from URL, try to get it from productURL directly
+                        if (data[i].productURL) {
+                            try {
+                                const urlObj = new URL(data[i].productURL);
+                                const pathParts = urlObj.pathname.split('/').filter(part => part);
+                                if (pathParts.length > 0) {
+                                    // Get the last part of the path
+                                    slug = pathParts[pathParts.length - 1];
+                                    // Clean up the slug - only remove query params, keep the full slug including prefixes
+                                    slug = slug.split('?')[0];
+                                    // Don't remove "download-" prefix as it's part of the actual slug
+                                }
+                            } catch (urlErr) {
+                                console.log(`Error extracting slug from productURL: ${urlErr.message}`);
+                                // Fallback to filename
+                                if (data[i].filename) {
+                                    slug = data[i].filename.replace(/\.zip$/, '');
+                                    console.log(`Using filename-based slug: ${slug}`);
+                                } else {
+                                    slug = '';
+                                }
+                            }
+                        } else {
+                            // As a fallback, create from product name
+                            slug = textWithoutVersion.toLowerCase()
+                                .replace(/[^\w\s-]/g, '')
+                                .replace(/\s+/g, '-')
+                                .replace(/-+/g, '-')
+                                .replace(/^-+|-+$/g, '');
+                        }
+                    }
+                    
+                    // Always set these fields
+                    data[i].version = versionWithoutV;
+                    data[i].name = textWithoutVersion;
+                    data[i].slug = slug;
+                    data[i].filename = '';
+                    data[i].filePath = '';
+                    data[i].fileUrl = '';
+                    data[i].productId = productId || '';
+                } else {
+                    // No version number found, set defaults
+                    data[i].version = '';
+                    data[i].name = text;
+                    
+                    // Create a slug from the product name
+                    data[i].slug = text.toLowerCase()
+                        .replace(/[^\w\s-]/g, '')
+                        .replace(/\s+/g, '-')
+                        .replace(/-+/g, '-')
+                        .replace(/^-+|-+$/g, '');
+                        
+                    data[i].filename = '';
+                    data[i].filePath = '';
+                    data[i].fileUrl = '';
+                    data[i].productId = '';
+                }
+            }
+            console.log('Data processing completed.');
+
+            // Process each title and download the files
+            let fileCounter = 0;
+            let errorCounter = 0;
+            let skippedFromHistory = 0;
+            let totalDownloadedFiles = 0; // Track total downloaded files
+            
+            // Ensure download directory exists
+            const downloadPath = path.resolve('./public/downloads/');
+            if (!fs.existsSync(downloadPath)) {
+                fs.mkdirSync(downloadPath, { recursive: true });
+            }
+            
+            for (let i = 0; i < data.length; i++) {
+                console.log(`Processing download ${i + 1} of ${data.length}: ${data[i].productName}...`);
+                try {
+                    // Extract the slug for filename
+                    var modifiedString = data[i].slug.replace(/-download$/, "");
+                    modifiedString = modifiedString.replace(/download-/, "");
+                    var filename = `${modifiedString}.zip`;
+                    const filePath = path.join('./public/downloads/', filename);
+                    
+                    // Check if file already exists (to avoid redownloading)
+                    if (fs.existsSync(filePath)) {
+                        console.log(`File ${filename} already exists, skipping download`);
+                        data[i].filename = filename;
+                        data[i].filePath = filePath;
+                        data[i].fileUrl = `${DOWNLOAD_URL}/${filename}`;
+                        fileCounter++;
+                        list.push(data[i]);
+                        continue;
+                    }
+
+                    // Only navigate to changelog page if we're not already there
+                    if (!isOnChangelogPage) {
+                        console.log(`Navigating to changelog page to find download buttons...`);
+                        await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=250', { waitUntil: 'networkidle2' });
+                        isOnChangelogPage = true;
+                    } else {
+                        console.log(`Already on changelog page, looking for download buttons...`);
+                    }
+                    
+                    // Start watching for new files before clicking the download button
+                    const fileWatcherPromise = watchForNewFile(downloadPath);
+                    
+                    // Find the specific row with the product
+                    console.log(`Looking for row with product ID: ${data[i].id}...`);
+                    
+                    // Click the download button in the specific row
+                    const downloadSuccess = await page.evaluate(async (productId) => {
+                        // Find the row with the specific data-id
+                        const row = document.querySelector(`tr.awcpt-row[data-id="${productId}"]`);
+                        if (!row) {
+                            return { success: false, error: 'Row not found' };
+                        }
+                        
+                        // Try to find the download button in this row
+                        const downloadBtn = row.querySelector('.awcpt-shortcode-wrap a.yith-wcmbs-download-button');
+                        if (!downloadBtn) {
+                            return { success: false, error: 'Download button not found in row' };
+                        }
+                        
+                        // Check if it's locked or unlocked
+                        const isLocked = downloadBtn.classList.contains('locked');
+                        const isUnlocked = downloadBtn.classList.contains('unlocked');
+                        
+                        console.log(`Found button for product ${productId}: Locked: ${isLocked}, Unlocked: ${isUnlocked}`);
+                        
+                        // Click the button
+                        downloadBtn.click();
+                        
+                        return { 
+                            success: true, 
+                            locked: isLocked, 
+                            unlocked: isUnlocked,
+                            href: downloadBtn.getAttribute('href')
+                        };
+                    }, data[i].id);
+                    
+                    if (!downloadSuccess || !downloadSuccess.success) {
+                        console.error(`Failed to find or click download button: ${downloadSuccess?.error || 'Unknown error'}`);
+                        
+                        // Try alternate method - direct navigation
+                        if (downloadSuccess?.href) {
+                            console.log(`Trying direct navigation to: ${downloadSuccess.href}`);
+                            await page.goto(downloadSuccess.href, { waitUntil: 'networkidle2' });
+                            isOnChangelogPage = false; // We're no longer on the changelog page
+                        } else {
+                            throw new Error('Download button not found and no href available');
+                        }
+                    } else {
+                        console.log(`Download button clicked successfully. Locked: ${downloadSuccess.locked}, Unlocked: ${downloadSuccess.unlocked}`);
+                        isOnChangelogPage = false; // We're no longer on the changelog page after clicking
+                        
+                        // If it's a locked button, we might need additional steps
+                        if (downloadSuccess.locked) {
+                            console.log('Processing locked download...');
+                            // Wait for any navigation or dialogs that might appear for locked downloads
+                            await page.waitForNavigation({ timeout: 100 }).catch(() => {
+                                console.log('No navigation occurred after clicking locked button');
+                            });
+                            
+                            // Check for any unlock buttons or forms that might appear
+                            const unlockElement = await page.$('button.unlock, a.unlock, input[type="submit"][value*="unlock"]')
+                                .catch(() => null);
+                            
+                            if (unlockElement) {
+                                console.log('Found unlock element, clicking it...');
+                                await unlockElement.click();
+                                await page.waitForNavigation({ timeout: 100 }).catch(() => {});
+                            }
+                        }
+                    }
+                    
+                    // Wait for a new file to appear in the downloads directory
+                    console.log(`Waiting for download to start...`);
+                    const newFile = await fileWatcherPromise;
+                    
+                    if (newFile) {
+                        console.log(`Download detected: ${newFile.filename}`);
+                        
+                        // Get file stats before waiting
+                        const beforeStats = fs.statSync(newFile.path);
+                        const downloadStartTime = Date.now();
+                        
+                        // Wait for the download to complete
+                        console.log(`Waiting for download to complete...`);
+                        await waitForFileToFinish(newFile.path);
+                        
+                        // Get file stats after download is complete
+                        const afterStats = fs.statSync(newFile.path);
+                        const downloadEndTime = Date.now();
+                        const downloadTime = (downloadEndTime - downloadStartTime) / 1000; // in seconds
+                        const downloadSpeed = afterStats.size / downloadTime;
+                        
+                        console.log(`Download completed in ${formatTime(downloadTime)}`);
+                        console.log(`Average download speed: ${formatSpeed(downloadSpeed)}`);
+                        
+                        // Update download statistics
+                        fileCounter++;
+                        list.push(data[i]);
+                    } else {
+                        console.log(`No download detected for ${data[i].productName}`);
+                        
+                        // Try one more approach - check if there's a direct download link
+                        try {
+                            console.log(`Looking for direct download link...`);
+                            const downloadLink = await page.evaluate(() => {
+                                // Try to find a download link
+                                const links = Array.from(document.querySelectorAll('a[href*=".zip"], a[href*=".rar"], a[href*=".tar"], a[href*=".gz"]'));
+                                return links.length > 0 ? links[0].href : null;
+                            });
+                            
+                            if (downloadLink) {
+                                console.log(`Found direct download link: ${downloadLink}`);
+                                
+                                // Download using Node.js
+                                const response = await axios({
+                                    url: downloadLink,
+                                    method: 'GET',
+                                    responseType: 'stream',
+                                    headers: {
+                                        'User-Agent': await page.evaluate(() => navigator.userAgent)
+                                    }
+                                });
+                                
+                                // Create write stream for the file
+                                const writer = fs.createWriteStream(filePath);
+                                
+                                // Pipe download to file and wait for completion
+                                await new Promise((resolve, reject) => {
+                                    response.data.pipe(writer);
+                                    writer.on('finish', resolve);
+                                    writer.on('error', reject);
+                                });
+                                
+                                console.log(`Direct download successful: ${data[i].productName}`);
+                                
+                                // Update the data with file info
+                                data[i].filename = filename;
+                                data[i].filePath = filePath;
+                                data[i].fileUrl = `${DOWNLOAD_URL}/${filename}`;
+                                
+                                fileCounter++;
+                                list.push(data[i]);
+
+                                // We're still not on the changelog page after direct download
+                                isOnChangelogPage = false;
+                            } else {
+                                throw new Error('No direct download link found');
+                            }
+                        } catch (directErr) {
+                            console.error(`Direct download approach failed: ${directErr.message}`);
+                            throw new Error('Download not detected and direct download failed');
+                        }
+                    }
+                    
+                    // Wait for download to complete
+                    await delay(100); // Use universal delay function
+                } catch (e) {
+                    errorCounter++;
+                    console.error(`Failed to download: ${data[i].productName}`);
+                    console.error(e);
+                    error.push(data[i]);
+                    
+                    // If we encountered an error, we may not know what page we're on
+                    // To be safe, assume we need to navigate back to changelog page
+                    isOnChangelogPage = false;
+                }
+            }
+
+            console.log('Downloaded files:', fileCounter);
+            console.log('Errors:', errorCounter);
+            // Close the Puppeteer browser
+            await browser.close();
+
+            console.log('Browser closed.');
+            try{
+                touch('error.csv');
+                convertJsonToCsv(error, './public/error.csv', (err, errorSummary) => {
+                    if (err) {
+                        console.error('Error:', err);
+                    } else {
+                        console.log('Error CSV file has been saved:', errorSummary);
+                    }
+                });
+
+            }
+            catch (err) {
+                console.error('An error occurred:');
+                console.error(err);
+                return err;
+            }
+            try{
+                // Verify all required fields are present
+                console.log('Verifying all required fields before CSV generation...');
+                list.forEach((item, index) => {
+                    // Ensure version is in column 6 (index 5)
+                    if (typeof item.version === 'undefined') {
+                        console.log(`Adding missing version field for item ${index}`);
+                        item.version = '';
+                    }
+                    
+                    // Ensure slug is in column 8 (index 7)
+                    if (typeof item.slug === 'undefined' || item.slug === '') {
+                        console.log(`Adding missing slug field for item ${index}`);
+                        if (item.productURL) {
+                            try {
+                                // Try to extract slug from product URL
+                                const urlObj = new URL(item.productURL);
+                                const pathParts = urlObj.pathname.split('/').filter(part => part);
+                                if (pathParts.length > 0) {
+                                    // Get the last part of the path
+                                    slug = pathParts[pathParts.length - 1];
+                                    // Clean up the slug - only remove query params, keep the full slug including prefixes
+                                    slug = slug.split('?')[0];
+                                    // Don't remove "download-" prefix as it's part of the actual slug
+                                }
+                            } catch (urlErr) {
+                                console.log(`Error extracting slug from productURL: ${urlErr.message}`);
+                                // Fallback to filename
+                                if (item.filename) {
+                                    item.slug = item.filename.replace(/\.zip$/, '');
+                                    console.log(`Using filename-based slug: ${item.slug}`);
+                                } else {
+                                    item.slug = '';
+                                }
+                            }
+                        } else if (item.filename) {
+                            item.slug = item.filename.replace(/\.zip$/, '');
+                            console.log(`Using filename-based slug: ${item.slug}`);
+                        } else {
+                            item.slug = '';
+                        }
+                    }
+                    
+                    // Ensure fileUrl is in column 9 (index 8)
+                    if (typeof item.fileUrl === 'undefined') {
+                        console.log(`Adding missing fileUrl field for item ${index}`);
+                        if (item.filename) {
+                            item.fileUrl = `${DOWNLOAD_URL}/${item.filename}`;
+                        } else {
+                            item.fileUrl = '';
+                        }
+                    }
+                });
+                
+                db.JSON(list);
+                db.sync();
+                touch('data.csv');
+                convertJsonToCsv(list, './public/data.csv', (err, dataSummary) => {
+                    if (err) {
+                        console.error('Error:', err);
+                    } else {
+                        console.log('Data CSV file has been saved:', dataSummary);
+                        
+                        // Notify plugin.php that the data is ready
+                        notifyPluginDataReady(fileCounter, error.length)
+                            .then(response => console.log('Plugin notification sent successfully:', response))
+                            .catch(err => console.error('Failed to notify plugin:', err));
+                    }
+                });
+
+            }
+            catch (err) {
+                console.error('An error occurred:');
+                console.error(err);
+                return err;
+            }
+            return list.length
+
+        } catch (err) {
+            console.error('An error occurred:');
+            console.error(err);
+            return err;
+        }
+    } catch (err) {
+        console.error('An error occurred:');
+        console.error(err);
+        return err;
+    }
+}
 
 /**
  * Scans the download directory and reports existing files
@@ -585,278 +991,891 @@ const scanDownloadDirectory = () => {
   };
 };
 
-// Improved robust directory deletion using fs.rm with recursive option
-const removeDirectoryRecursive = async (dirPath) => {
-    if (!fs.existsSync(dirPath)) return;
-    
-    try {
-        // For Node.js 14.14.0+ we can use fs.rm with recursive option
-        if (fs.rm) {
-            await fs.promises.rm(dirPath, { recursive: true, force: true });
-            console.log(`Successfully removed directory: ${dirPath}`);
-        } else {
-            // Fallback for older Node.js versions
-            const deleteDirectory = (dirPath) => {
-                if (fs.existsSync(dirPath)) {
-                    fs.readdirSync(dirPath).forEach((file) => {
-                        const curPath = path.join(dirPath, file);
-                        if (fs.lstatSync(curPath).isDirectory()) {
-                            // Recursive call
-                            deleteDirectory(curPath);
-                        } else {
-                            // Delete file
-                            fs.unlinkSync(curPath);
-                        }
-                    });
-                    fs.rmdirSync(dirPath);
-                }
-            };
-            deleteDirectory(dirPath);
-            console.log(`Successfully removed directory: ${dirPath}`);
-        }
-    } catch (err) {
-        console.error(`Failed to remove directory ${dirPath}:`, err);
-    }
-};
-
-// Function to clean up temporary directories older than a certain age
-const cleanupOldTempDirectories = async (maxAgeHours = 24) => {
-    const downloadsDir = path.resolve('./public/downloads/');
-    if (!fs.existsSync(downloadsDir)) return;
-    
-    console.log(`Scanning for temporary directories older than ${maxAgeHours} hours...`);
-    const now = Date.now();
-    const maxAgeMs = maxAgeHours * 60 * 60 * 1000;
-    
-    try {
-        const entries = fs.readdirSync(downloadsDir);
-        let cleanedCount = 0;
-        
-        for (const entry of entries) {
-            if (entry.startsWith('temp-')) {
-                const dirPath = path.join(downloadsDir, entry);
-                if (!fs.existsSync(dirPath)) continue;
-                
-                const stats = fs.statSync(dirPath);
-                const ageMs = now - stats.mtimeMs;
-                
-                if (ageMs > maxAgeMs) {
-                    console.log(`Removing old temp directory: ${entry} (${Math.round(ageMs / 3600000)} hours old)`);
-                    await removeDirectoryRecursive(dirPath);
-                    cleanedCount++;
-                }
-            }
-        }
-        
-        console.log(`Cleaned up ${cleanedCount} old temporary directories`);
-    } catch (err) {
-        console.error('Error while cleaning up old temp directories:', err);
-    }
-};
-
-// Enhanced clearDownloadsDirectory to also handle temp directories
-const clearDownloadsDirectory = async (cleanTemp = true) => {
-    const downloadsDir = path.resolve('./public/downloads/');
-    
-    if (!fs.existsSync(downloadsDir)) {
-        console.log('Downloads directory does not exist, creating...');
-        fs.mkdirSync(downloadsDir, { recursive: true });
-        return;
-    }
-    
-    console.log('Clearing downloads directory...');
-    
-    // Get all files in the directory
-    const entries = fs.readdirSync(downloadsDir);
-    
-    // First, handle regular files
-    const files = entries.filter(entry => {
-        const entryPath = path.join(downloadsDir, entry);
-        // Filter out directories, system files, temp directories, and temp files
-        return fs.statSync(entryPath).isFile() && 
-            !entry.startsWith('.') && 
-            !entry.endsWith('.crdownload') &&
-            !entry.endsWith('.tmp') &&
-            entry !== 'index.html'; // Keep index.html
+/**
+ * Clears all files from the downloads directory
+ */
+const clearDownloadsDirectory = () => {
+  const downloadsDir = path.resolve('./public/downloads/');
+  
+  if (!fs.existsSync(downloadsDir)) {
+    console.log('Downloads directory does not exist, creating...');
+    fs.mkdirSync(downloadsDir, { recursive: true });
+    return;
+  }
+  
+  console.log('Clearing downloads directory...');
+  
+  // Get all files in the directory
+  const files = fs.readdirSync(downloadsDir)
+    .filter(file => {
+      const filePath = path.join(downloadsDir, file);
+      // Filter out directories, system files, and temp files
+      return fs.statSync(filePath).isFile() && 
+        !file.startsWith('.') && 
+        !file.endsWith('.crdownload') &&
+        file !== 'index.html'; // Keep index.html
     });
+  
+  if (files.length === 0) {
+    console.log('No files to clear in downloads directory');
+    return;
+  }
+  
+  console.log(`Found ${files.length} files to clear from downloads directory`);
+  
+  // Delete each file
+  let deletedCount = 0;
+  let errorCount = 0;
+  
+  files.forEach(file => {
+    try {
+      const filePath = path.join(downloadsDir, file);
+      fs.unlinkSync(filePath);
+      console.log(`Deleted: ${file}`);
+      deletedCount++;
+    } catch (err) {
+      console.error(`Error deleting file ${file}:`, err.message);
+      errorCount++;
+    }
+  });
+  
+  console.log(`Cleared ${deletedCount} files from downloads directory`);
+  if (errorCount > 0) {
+    console.warn(`Failed to delete ${errorCount} files`);
+  }
+};
+
+// New function to download all files from the changelog page
+const downloadAllFiles = async (date = new Date()) => {
+    const dbPath = path.join(__dirname, 'files.json');
+    ensureDirectoryExistence(dbPath);
+    const db = new JSONdb(dbPath);
+    db.JSON({});
+    let list = [];
+    let error = [];
+    let skippedFromHistory = 0;
+    let totalDownloadedFiles = 0; // Track total downloaded files
     
-    if (files.length === 0) {
-        console.log('No regular files to clear in downloads directory');
-    } else {
-        console.log(`Found ${files.length} files to clear from downloads directory`);
+    try {
+        // Ensure download directory exists
+        const downloadPath = path.resolve('./public/downloads/');
+        if (!fs.existsSync(downloadPath)) {
+            fs.mkdirSync(downloadPath, { recursive: true });
+            // Create an index.html file to ensure the directory is browsable
+            const indexPath = path.join(downloadPath, 'index.html');
+            if (!fs.existsSync(indexPath)) {
+                fs.writeFileSync(indexPath, '<html><body><h1>Downloads Directory</h1></body></html>');
+            }
+        }
         
-        // Delete each file
-        let deletedCount = 0;
-        let errorCount = 0;
+        // Clear downloads directory at startup
+        clearDownloadsDirectory();
         
-        for (const file of files) {
+        // Scan existing files in download directory
+        console.log('Scanning download directory for existing files...');
+        const directoryReport = scanDownloadDirectory();
+        console.log(`Scan complete: Found ${directoryReport.fileCount} files with total size of ${directoryReport.totalSizeFormatted || '0 Bytes'}`);
+        
+        // Check if we're in development mode
+        const isDevelopment = process.env.NODE_ENV === 'development';
+        console.log(`Running in ${isDevelopment ? 'DEVELOPMENT' : 'PRODUCTION'} mode`);
+        
+        // Launch Puppeteer browser
+        console.log('Launching Puppeteer browser...');
+        const browser = await puppeteer.launch({
+            headless: true,
+            args: ['--no-sandbox', '--disable-setuid-sandbox'],
+            defaultViewport: null,
+            // Explicitly set download preferences to prevent using system Downloads folder
+            userDataDir: path.join(process.cwd(), 'temp_user_data')
+        });
+        
+        // Create a new page
+        const page = await browser.newPage();
+        page.setDefaultTimeout(0);
+        
+        // Set download behavior using CDP (Chrome DevTools Protocol)
+        const client = await page.target().createCDPSession();
+        await client.send('Page.setDownloadBehavior', {
+            behavior: 'allow',
+            downloadPath: path.resolve('./public/downloads/')
+        });
+        
+        // Also set download preferences via page.evaluateOnNewDocument
+        await page.evaluateOnNewDocument((downloadPath) => {
+            // This runs in the browser context
+            Object.defineProperty(navigator, 'plugins', {
+                get: function() {
+                    return {
+                        length: 0,
+                        refresh: function() {}
+                    };
+                }
+            });
+            
+            // Try to override Chrome's download settings
+            if (window.chrome && chrome.runtime && chrome.runtime.sendMessage) {
+                chrome.runtime.sendMessage({
+                    type: 'DOWNLOAD_SETTINGS',
+                    downloadPath: downloadPath,
+                    prompt: false
+                });
+            }
+        }, path.resolve('./public/downloads/'));
+        
+        try {
+            // Go to the login page
+            console.log('Going to the login page...');
+            await page.goto('https://www.realgpl.com/my-account/');
+            
             try {
-                const filePath = path.join(downloadsDir, file);
-                fs.unlinkSync(filePath);
-                console.log(`Deleted: ${file}`);
-                deletedCount++;
-            } catch (err) {
-                console.error(`Error deleting file ${file}:`, err.message);
-                errorCount++;
+                // consent label
+                await Promise.all([
+                    page.click('.fc-button-label'),
+                ]);
+            } catch (error) {
+                console.log('No Consent block')
             }
-        }
-        
-        console.log(`Cleared downloads directory: ${deletedCount} files deleted, ${errorCount} errors`);
-    }
-    
-    // Next, handle temp files and directories if requested
-    if (cleanTemp) {
-        // Find all temp directories
-        const tempDirs = entries.filter(entry => {
-            const entryPath = path.join(downloadsDir, entry);
-            return fs.statSync(entryPath).isDirectory() && 
-                  (entry.startsWith('temp-') || entry === 'temp_user_data');
-        });
-        
-        if (tempDirs.length > 0) {
-            console.log(`Found ${tempDirs.length} temporary directories to clean`);
             
-            for (const dir of tempDirs) {
-                const dirPath = path.join(downloadsDir, dir);
-                // Skip temp_user_data as it's handled separately, but clean all temp- dirs
-                if (dir !== 'temp_user_data') {
-                    await removeDirectoryRecursive(dirPath);
-                }
-            }
-        }
-        
-        // Clean temp files - be more aggressive with temporary files
-        const tempFiles = entries.filter(entry => {
-            const entryPath = path.join(downloadsDir, entry);
-            return fs.statSync(entryPath).isFile() && 
-                (entry.endsWith('.tmp') || 
-                 entry.endsWith('.crdownload') || 
-                 entry.endsWith('.partial') ||
-                 entry.endsWith('.download'));
-        });
-        
-        if (tempFiles.length > 0) {
-            console.log(`Found ${tempFiles.length} temporary files to clean`);
+            var username = process.env.USERNAME;
+            var password = process.env.PASSWORD;
+            // Fill in the login credentials
+            console.log('Typing username...');
+            await page.type('#username', username.toString());
             
-            for (const file of tempFiles) {
-                try {
-                    const filePath = path.join(downloadsDir, file);
-                    fs.unlinkSync(filePath);
-                    console.log(`Deleted temporary file: ${file}`);
-                } catch (err) {
-                    console.error(`Error deleting temporary file ${file}:`, err.message);
-                }
-            }
-        }
-    }
-};
-
-// Create a wrapped version that enhances the original
-const clearDownloadsDirectoryEnhanced = async (cleanTemp = false) => {
-    await clearDownloadsDirectory(cleanTemp);
-};
-
-// Comprehensive cleanup function that handles all temporary files and directories
-const cleanupAllTemporaryFiles = async () => {
-    try {
-        console.log('Starting comprehensive cleanup of all temporary files...');
-        
-        // Clear the downloads directory first
-        await clearDownloadsDirectoryEnhanced(true);
-        
-        // Then clean up any old temp directories
-        await cleanupOldTempDirectories(24); // Clean up dirs older than 24 hours
-        
-        console.log('Comprehensive cleanup completed');
-        return true;
-    } catch (err) {
-        console.error('Error in comprehensive cleanup:', err);
-        return false;
-    }
-};
-
-// Improved cleanup function for Chrome user data directory
-const cleanupUserDataDir = async () => {
-    const userDataDir = path.join(process.cwd(), 'temp_user_data');
-    if (fs.existsSync(userDataDir)) {
-        console.log('Cleaning up Chrome user data directory...');
-        await removeDirectoryRecursive(userDataDir);
-    }
-};
-
-// Function to recreate the user data directory fresh to prevent it from growing too large
-const recreateUserDataDir = async () => {
-    const userDataDir = path.join(process.cwd(), 'temp_user_data');
-    console.log(`Recreating Chrome user data directory: ${userDataDir}`);
-    
-    try {
-        // Clean up the existing directory
-        await cleanupUserDataDir();
-        
-        // Create a fresh directory
-        if (!fs.existsSync(userDataDir)) {
-            fs.mkdirSync(userDataDir, { recursive: true });
-            console.log('Created fresh Chrome user data directory');
-        }
-        
-        return true;
-    } catch (err) {
-        console.error('Error recreating Chrome user data directory:', err);
-        return false;
-    }
-};
-
-// Add improved signal handlers for cleanup
-process.on('exit', () => {
-    console.log('Process exiting - cleaning up...');
-    // For the exit event, we must use synchronous operations
-    try {
-        const userDataDir = path.join(process.cwd(), 'temp_user_data');
-        if (fs.existsSync(userDataDir)) {
-            // Use the synchronous deleteDirectory for process.exit
-            const deleteDirectory = (dirPath) => {
-                if (fs.existsSync(dirPath)) {
-                    fs.readdirSync(dirPath).forEach((file) => {
-                        const curPath = path.join(dirPath, file);
-                        if (fs.lstatSync(curPath).isDirectory()) {
-                            // Recursive call
-                            deleteDirectory(curPath);
-                        } else {
-                            // Delete file
-                            fs.unlinkSync(curPath);
+            console.log('Typing password...');
+            await page.type('#password', password.toString());
+            
+            console.log('Clicking the login button...');
+            await Promise.all([
+                page.waitForNavigation(),
+                page.click('.button.woocommerce-button.woocommerce-form-login__submit'),
+            ]);
+            
+            // Go to the changelog page
+            console.log('Going to the changelog page...');
+            await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=250', { waitUntil: 'networkidle2' });
+            
+            // Format the date for comparison
+            var theDate = new Date(date).toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+            });
+            console.log(`Filtering changelog entries for date: ${theDate}`);
+            
+            // Extract all rows from the changelog page
+            console.log('Extracting rows from changelog page...');
+            const allRows = await page.evaluate((targetDate) => {
+                const rows = document.querySelectorAll('tr.awcpt-row');
+                const rowDataArray = [];
+                
+                for (const row of rows) {
+                    try {
+                        const rowDate = row.querySelector('.awcpt-date').innerText;
+                        
+                        // Filter rows by date
+                        if (targetDate === rowDate) {
+                            const id = row.getAttribute('data-id');
+                            const cartIn = row.getAttribute('data-cart-in');
+                            const productName = row.querySelector('.awcpt-title').innerText;
+                            
+                            // Get all download buttons in this row
+                            const downloadBtns = row.querySelectorAll('.awcpt-shortcode-wrap a.yith-wcmbs-download-button');
+                            if (downloadBtns.length === 0) continue; // Skip if no download buttons
+                            
+                            // Collect information about all buttons
+                            const buttons = [];
+                            for (const btn of downloadBtns) {
+                                buttons.push({
+                                    href: btn.getAttribute('href'),
+                                    className: btn.className,
+                                    dataKey: btn.getAttribute('data-key'),
+                                    buttonName: btn.querySelector('.yith-wcmbs-download-button__name')?.innerText || '',
+                                    isLocked: btn.classList.contains('locked'),
+                                    isUnlocked: btn.classList.contains('unlocked')
+                                });
+                            }
+                            
+                            const productURL = row.querySelector('.awcpt-prdTitle-col a').getAttribute('href');
+                            
+                            // Create an object with the extracted data for each row
+                            const rowData = {
+                                id,
+                                cartIn,
+                                productName,
+                                date: rowDate,
+                                productURL,
+                                multipleButtons: buttons.length > 1,
+                                buttonCount: buttons.length,
+                                buttons: buttons
+                            };
+                            
+                            rowDataArray.push(rowData);
                         }
-                    });
-                    fs.rmdirSync(dirPath);
+                    } catch (e) {
+                        console.error(`Error processing row: ${e.message}`);
+                    }
                 }
+                
+                return rowDataArray;
+            }, theDate);
+            
+            console.log(`Found ${allRows.length} rows in the changelog for date: ${theDate}`);
+            
+            // Process each row and download the files
+            let fileCounter = 0;
+            let errorCounter = 0;
+            let totalBytesDownloaded = 0;
+            
+            // Import node.js file system and archiver for zipping files
+            const archiver = require('archiver');
+            
+            // Get initial disk space information
+            const initialDiskInfo = await getDiskInfo(downloadPath);
+            if (initialDiskInfo) {
+                console.log('=== Initial Disk Space Information ===');
+                console.log(`Total space: ${initialDiskInfo.totalFormatted}`);
+                console.log(`Available space: ${initialDiskInfo.availableFormatted}`);
+                console.log(`Used: ${initialDiskInfo.usedPercentage}%`);
+                console.log('======================================');
+            }
+            
+            // Display system information
+            console.log('=== System Information ===');
+            console.log(`Platform: ${os.platform()}`);
+            console.log(`Architecture: ${os.arch()}`);
+            console.log(`CPU cores: ${os.cpus().length}`);
+            console.log(`Total memory: ${formatBytes(os.totalmem())}`);
+            console.log(`Free memory: ${formatBytes(os.freemem())}`);
+            console.log('=========================');
+            
+            // Create a summary object to track download statistics
+            const downloadStats = {
+                startTime: Date.now(),
+                totalFiles: 0,
+                totalBytes: 0,
+                successfulDownloads: 0,
+                failedDownloads: 0,
+                largestFile: { name: '', size: 0 },
+                smallestFile: { name: '', size: Infinity },
+                averageFileSize: 0,
+                totalDownloadTime: 0,
+                averageSpeed: 0
             };
-            deleteDirectory(userDataDir);
+            
+            // Limit number of rows in development mode
+            const rowsToProcess = isDevelopment ? Math.min(2, allRows.length) : allRows.length;
+            if (isDevelopment) {
+                console.log(`DEVELOPMENT MODE: Processing only ${rowsToProcess} rows`);
+            }
+            
+            // Flag to track if we're on the changelog page
+            let isOnChangelogPage = true;
+            
+            for (let i = 0; i < rowsToProcess; i++) {
+                const row = allRows[i];
+                console.log(`Processing download ${i + 1} of ${rowsToProcess}: ${row.productName}...`);
+                
+                try {
+                    // Extract a filename from the product name
+                    let slugFromName = row.productName
+                        .toLowerCase()
+                        .replace(/[^\w\s-]/g, '')
+                        .replace(/\s+/g, '-')
+                        .replace(/-+/g, '-')
+                        .replace(/^-+|-+$/g, '');
+                    
+                    // Prevent duplicate name parts in filenames
+                    const parts = slugFromName.split('-');
+                    if (parts.length > 3) {
+                        // Check for duplicate segments
+                        const uniqueParts = [];
+                        const seenParts = new Set();
+                        
+                        for (const part of parts) {
+                            // Only consider substantial parts (longer than 3 chars)
+                            if (part.length > 3) {
+                                // Check if we've seen this part or a similar one before
+                                let isDuplicate = false;
+                                for (const seenPart of seenParts) {
+                                    if (part.includes(seenPart) || seenPart.includes(part)) {
+                                        isDuplicate = true;
+                                        break;
+                                    }
+                                }
+                                
+                                if (!isDuplicate) {
+                                    uniqueParts.push(part);
+                                    seenParts.add(part);
+                                }
+                            } else {
+                                // Keep short parts as they might be important connectors
+                                uniqueParts.push(part);
+                            }
+                        }
+                        
+                        // Only use unique parts if we have enough to make a meaningful name
+                        if (uniqueParts.length >= 2) {
+                            slugFromName = uniqueParts.join('-');
+                        }
+                    }
+                    
+                    // Create a unique identifier for this product
+                    const productIdentifier = `${row.id}-${slugFromName}`;
+                    
+                    // Create a proper filename for the archive
+                    const finalArchiveFilename = `${slugFromName}-${row.id}.zip`;
+                    const finalArchivePath = path.join(downloadPath, finalArchiveFilename);
+                    
+                    // Check download history first
+                    if (downloadHistory.has(productIdentifier)) {
+                        const historyRecord = downloadHistory.get(productIdentifier);
+                        console.log(`Product "${row.productName}" was previously downloaded on ${historyRecord.date}`);
+                        console.log(`File exists at: ${historyRecord.filePath}`);
+                        
+                        // Verify the file still exists
+                        if (fs.existsSync(historyRecord.filePath)) {
+                            console.log(`Skipping download - already in history and file exists`);
+                            row.filename = historyRecord.filename;
+                            row.filePath = historyRecord.filePath;
+                            row.fileUrl = historyRecord.fileUrl;
+                            fileCounter++;
+                            list.push(row);
+                            skippedFromHistory++;
+                            continue;
+                        } else {
+                            console.log(`File in history doesn't exist anymore, will re-download`);
+                            // Continue with download since the file is missing
+                        }
+                    }
+                    
+                    // Create a temporary directory for downloaded files for this row
+                    const tempDirName = `temp-${row.id}-${Date.now()}`;
+                    const tempDirPath = path.join(downloadPath, tempDirName);
+                    if (!fs.existsSync(tempDirPath)) {
+                        fs.mkdirSync(tempDirPath, { recursive: true });
+                    }
+                    
+                    // Array to track downloaded files for this row
+                    const downloadedFiles = [];
+                    
+                    // Navigate directly to the product page instead of the changelog page
+                    console.log(`Navigating directly to product page: ${row.productURL}`);
+                    await page.goto(row.productURL, { waitUntil: 'networkidle2' });
+                    
+                    // Use waitFor or waitForTimeout depending on which is available
+                    // This ensures compatibility with different Puppeteer versions
+                    console.log('Waiting for page to fully load...');
+                    await delay(2000); // Use our universal delay function
+                    
+                    // Process each button in the row ONE AT A TIME
+                    for (let b = 0; b < row.buttons.length; b++) {
+                        const button = row.buttons[b];
+                        const buttonName = button.buttonName || `file-${b+1}`;
+                        console.log(`Processing button ${b + 1} of ${row.buttons.length}: ${buttonName}`);
+                        
+                        // Set up the temporary file name for this button's download
+                        const buttonFilename = `${slugFromName}-${buttonName.toLowerCase().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-')}.zip`;
+                        const buttonFilePath = path.join(tempDirPath, buttonFilename);
+                        
+                        // Start watching for new files before clicking the download button
+                        const fileWatcherPromise = watchForNewFile(downloadPath);
+                        
+                        // Look for download buttons on the product page - handling both single and multi-button scenarios
+                        console.log(`Looking for download buttons on product page for: ${buttonName}...`);
+                        const buttonClicked = await page.evaluate((buttonDataKey, buttonName) => {
+                            // Log what we're looking for
+                            console.log(`Looking for button with data-key: ${buttonDataKey} or name containing: ${buttonName}`);
+                            
+                            // Try to find buttons by multiple methods
+                            const allButtons = document.querySelectorAll('a.yith-wcmbs-download-button');
+                            console.log(`Found ${allButtons.length} download buttons on the page`);
+                            
+                            let targetButton = null;
+                            
+                            // First try: direct match by data-key (most reliable)
+                            if (buttonDataKey) {
+                                targetButton = document.querySelector(`a.yith-wcmbs-download-button[data-key="${buttonDataKey}"]`);
+                                if (targetButton) {
+                                    console.log(`Found button by data-key: ${buttonDataKey}`);
+                                }
+                            }
+                            
+                            // Second try: match by name if we have a button name
+                            if (!targetButton && buttonName) {
+                                // Loop through all buttons to find name matches
+                                for (const btn of allButtons) {
+                                    const nameElement = btn.querySelector('.yith-wcmbs-download-button__name');
+                                    if (nameElement && nameElement.innerText === buttonName) {
+                                        targetButton = btn;
+                                        console.log(`Found button by exact name: ${buttonName}`);
+                                        break;
+                                    }
+                                    
+                                    // Try partial match as fallback
+                                    if (nameElement && nameElement.innerText.includes(buttonName)) {
+                                        targetButton = btn;
+                                        console.log(`Found button by partial name match: ${nameElement.innerText}`);
+                                        break;
+                                    }
+                                }
+                            }
+                            
+                            // Third try: if there's only one button and we haven't found anything, just use that
+                            if (!targetButton && allButtons.length === 1) {
+                                targetButton = allButtons[0];
+                                console.log(`Using the only available button on the page`);
+                            }
+                            
+                            // Fourth try: use any button with similar class name
+                            if (!targetButton && buttonDataKey) {
+                                // Extract class name from data-key (often they're related)
+                                const className = buttonDataKey.split('-')[0];
+                                if (className && className.length > 3) {
+                                    const classSelector = `a.yith-wcmbs-download-button[class*="${className}"]`;
+                                    targetButton = document.querySelector(classSelector);
+                                    if (targetButton) {
+                                        console.log(`Found button by class name similarity: ${className}`);
+                                    }
+                                }
+                            }
+                            
+                            // Last resort: just pick a button at index
+                            if (!targetButton && allButtons.length > 0) {
+                                const index = Math.min(b, allButtons.length - 1);
+                                targetButton = allButtons[index];
+                                console.log(`Falling back to button at index: ${index}`);
+                            }
+                            
+                            // Click the target button if found
+                            if (targetButton) {
+                                targetButton.click();
+                                return true;
+                            }
+                            
+                            return false;
+                        }, button.dataKey, buttonName);
+                        
+                        if (!buttonClicked) {
+                            console.error(`Failed to click download button: ${buttonName}`);
+                            continue; // Skip this button but try others
+                        }
+                        
+                        console.log('Download button clicked on product page');
+                        
+                        // Wait for navigation if needed
+                        try {
+                            await page.waitForNavigation({ timeout: 5000 });
+                        } catch (navErr) {
+                            console.log('No navigation occurred or already completed');
+                        }
+                        
+                        // Check for locked download handling
+                        const isLocked = await page.evaluate(() => {
+                            return document.querySelector('button.unlock, a.unlock, input[type="submit"][value*="unlock"]') !== null;
+                        });
+                        
+                        if (isLocked) {
+                            console.log('Processing locked download...');
+                            try {
+                                await page.click('button.unlock, a.unlock, input[type="submit"][value*="unlock"]');
+                                await page.waitForNavigation({ timeout: 10000 }).catch(() => {});
+                            } catch (unlockErr) {
+                                console.log(`Error unlocking download: ${unlockErr.message}`);
+                            }
+                        }
+                        
+                        // Look for direct download links on the page
+                        const directDownloadUrl = await page.evaluate(() => {
+                            const links = Array.from(document.querySelectorAll('a[href*=".zip"], a[href*=".rar"], a[href*=".tar"], a[href*=".gz"]'));
+                            return links.length > 0 ? links[0].href : null;
+                        });
+                        
+                        if (directDownloadUrl) {
+                            console.log(`Found direct download link: ${directDownloadUrl}`);
+                            try {
+                                await page.goto(directDownloadUrl, { timeout: 30000 }).catch(e => {
+                                    console.log(`Navigation error (expected for downloads): ${e.message}`);
+                                });
+                            } catch (dlErr) {
+                                console.log(`Error initiating download: ${dlErr.message}`);
+                            }
+                        }
+                        
+                        // Wait for download to start and complete
+                        console.log(`Waiting for download to complete...`);
+                        let downloadedFile = null;
+                        
+                        try {
+                            // Wait for file watcher to detect new files (with timeout)
+                            const fileWatchResult = await Promise.race([
+                                fileWatcherPromise,
+                                delay(120000).then(() => { throw new Error('Download timeout'); }) // Replace the inline Promise
+                            ]);
+                            
+                            if (fileWatchResult && fileWatchResult.path) {
+                                downloadedFile = fileWatchResult;
+                                console.log(`Download detected: ${downloadedFile.filename}`);
+                                
+                                // Move the downloaded file to our temp directory with correct name
+                                const afterStats = fs.statSync(downloadedFile.path);
+                                console.log(`Downloaded file size: ${formatBytes(afterStats.size)}`);
+                                
+                                fs.renameSync(downloadedFile.path, buttonFilePath);
+                                console.log(`Moved file to: ${buttonFilePath}`);
+                                
+                                // Add to our list of downloaded files for this product
+                                downloadedFiles.push({
+                                    originalPath: downloadedFile.path,
+                                    tempPath: buttonFilePath,
+                                    filename: buttonFilename,
+                                    buttonName: buttonName,
+                                    size: afterStats.size,
+                                    sizeFormatted: formatBytes(afterStats.size)
+                                });
+                                
+                                totalDownloadedFiles++;
+                            } else {
+                                console.log(`No download detected for button ${b+1}`);
+                            }
+                        } catch (watchErr) {
+                            console.error(`Error waiting for download: ${watchErr.message}`);
+                        }
+                        
+                        // Small pause between downloads of the same product
+                        console.log('Pausing before next button download...');
+                        await delay(3000); // Replace setTimeout with delay function
+                    } // End of button loop
+                    
+                    // After processing all buttons for this product
+                    if (downloadedFiles.length > 0) {
+                        // Archive all files into a single zip
+                        console.log(`Creating archive with ${downloadedFiles.length} files for ${row.productName}...`);
+                        
+                        // Create a file to stream archive data to
+                        const output = fs.createWriteStream(finalArchivePath);
+                        const archive = archiver('zip', {
+                            zlib: { level: 9 } // Compression level
+                        });
+                        
+                        // Listen for all archive data to be written
+                        output.on('close', function() {
+                            console.log(`Archive created: ${finalArchiveFilename}, total size: ${archive.pointer()} bytes`);
+                        });
+                        
+                        // Warning event
+                        archive.on('warning', function(err) {
+                            if (err.code === 'ENOENT') {
+                                console.warn('Archive warning:', err);
+                            } else {
+                                throw err;
+                            }
+                        });
+                        
+                        // Error event
+                        archive.on('error', function(err) {
+                            throw err;
+                        });
+                        
+                        // Pipe archive data to the file
+                        archive.pipe(output);
+                        
+                        // Add each file to the archive
+                        for (const file of downloadedFiles) {
+                            archive.file(file.tempPath, { name: file.filename });
+                        }
+                        
+                        // Finalize the archive
+                        await archive.finalize();
+                        
+                        // Clean up temp files after archiving
+                        console.log('Cleaning up temporary files...');
+                        for (const file of downloadedFiles) {
+                            if (fs.existsSync(file.tempPath)) {
+                                fs.unlinkSync(file.tempPath);
+                            }
+                        }
+                    }
+                    
+                    // Remove the temp directory
+                    if (fs.existsSync(tempDirPath)) {
+                        try {
+                            fs.rmdirSync(tempDirPath);
+                        } catch (rmErr) {
+                            console.warn(`Could not remove temp directory: ${rmErr.message}`);
+                        }
+                    }
+                    
+                    // Update the row with file info
+                    row.filename = finalArchiveFilename;
+                    row.filePath = finalArchivePath;
+                    row.fileUrl = `${DOWNLOAD_URL}/${finalArchiveFilename}`;
+                    row.downloadedFiles = downloadedFiles.length;
+                    
+                    // Ensure required fields are set even if they weren't extracted earlier
+                    if (!row.version && row.productName) {
+                        // Try to extract version from product name
+                        try {
+                            const versionMatch = row.productName.match(/v\d+(\.\d+){0,3}/);
+                            if (versionMatch) {
+                                row.version = versionMatch[0].replace('v', '');
+                            } else {
+                                // No version found in the pattern v1.2.3, try looking for numbers
+                                const numberMatch = row.productName.match(/\s\d+(\.\d+){0,3}/);
+                                if (numberMatch) {
+                                    row.version = numberMatch[0].trim();
+                                } else {
+                                    row.version = ''; // Set empty if no version found
+                                }
+                            }
+                        } catch (e) {
+                            row.version = '';
+                        }
+                    }
+                    
+                    if (!row.slug) {
+                        // Extract slug from productURL, which should be the Real GPL product slug
+                        if (row.productURL) {
+                            try {
+                                const urlObj = new URL(row.productURL);
+                                const pathParts = urlObj.pathname.split('/').filter(part => part);
+                                if (pathParts.length > 0) {
+                                    // Get the last part of the path - this is the exact product slug from Real GPL
+                                    let slug = pathParts[pathParts.length - 1];
+                                    // Clean up the slug - only remove query params, keep the full slug including prefixes
+                                    slug = slug.split('?')[0];
+                                    // Don't remove "download-" prefix as it's part of the actual slug
+                                    row.slug = slug;
+                                    console.log(`Extracted exact product slug '${slug}' from productURL`);
+                                } else {
+                                    // Fallback to filename
+                                    row.slug = finalArchiveFilename.replace(/\.zip$/, '');
+                                }
+                            } catch (urlErr) {
+                                console.log(`Error extracting slug from productURL: ${urlErr.message}`);
+                                // Fallback to filename
+                                row.slug = finalArchiveFilename.replace(/\.zip$/, '');
+                            }
+                        } else {
+                            // Fallback to filename
+                            row.slug = finalArchiveFilename.replace(/\.zip$/, '');
+                        }
+                    }
+                    
+                    // Add to download history
+                    downloadHistory.set(productIdentifier, {
+                        id: row.id,
+                        productName: row.productName,
+                        filename: finalArchiveFilename,
+                        filePath: finalArchivePath,
+                        fileUrl: `${DOWNLOAD_URL}/${finalArchiveFilename}`,
+                        date: new Date().toISOString(),
+                        fileSize: fs.statSync(finalArchivePath).size
+                    });
+                    downloadHistory.sync();
+                    
+                    console.log(`Download successful for product: ${row.productName}`);
+                    fileCounter++;
+                    list.push(row);
+                } catch (e) {
+                    errorCounter++;
+                    console.error(`Failed to download: ${row.productName}`);
+                    console.error(e);
+                    error.push(row);
+                }
+                
+                console.log(`Processed product ${i + 1} of ${rowsToProcess}: ${row.productName}`);
+                console.log('------------------------------------------------------');
+                
+                // If we're not on the last row, don't navigate back to the changelog
+                // Simply process the next product directly
+                if (i < rowsToProcess - 1) {
+                    console.log('Finished with current product, continuing to next product...');
+                    
+                    // Give a pause between products
+                    console.log('Pausing before next product...');
+                    await delay(5000); // Replace setTimeout with delay function
+                }
+            }
+            
+            // Display final download statistics
+            const endTime = Date.now();
+            const totalRunTime = (endTime - downloadStats.startTime) / 1000;
+            
+            console.log('\n=== Download Statistics Summary ===');
+            console.log(`Total files downloaded: ${downloadStats.totalFiles}`);
+            console.log(`Total data downloaded: ${formatBytes(downloadStats.totalBytes)}`);
+            console.log(`Successful downloads: ${downloadStats.successfulDownloads}`);
+            console.log(`Failed downloads: ${downloadStats.failedDownloads}`);
+            console.log(`Skipped (already in history): ${skippedFromHistory}`);
+            
+            if (downloadStats.largestFile.name) {
+                console.log(`Largest file: ${downloadStats.largestFile.name} (${downloadStats.largestFile.sizeFormatted})`);
+            }
+            
+            if (downloadStats.smallestFile.name) {
+                console.log(`Smallest file: ${downloadStats.smallestFile.name} (${downloadStats.smallestFile.sizeFormatted})`);
+            }
+            
+            if (downloadStats.totalFiles > 0) {
+                downloadStats.averageFileSize = downloadStats.totalBytes / downloadStats.totalFiles;
+                console.log(`Average file size: ${formatBytes(downloadStats.averageFileSize)}`);
+            }
+            
+            if (downloadStats.totalDownloadTime > 0) {
+                downloadStats.averageSpeed = downloadStats.totalBytes / downloadStats.totalDownloadTime;
+                console.log(`Average download speed: ${formatSpeed(downloadStats.averageSpeed)}`);
+            }
+            
+            console.log(`Total runtime: ${formatTime(totalRunTime)}`);
+            
+            // Get final disk space information
+            const finalDiskInfo = await getDiskInfo(downloadPath);
+            if (finalDiskInfo) {
+                console.log('\n=== Final Disk Space Information ===');
+                console.log(`Total space: ${finalDiskInfo.totalFormatted}`);
+                console.log(`Available space: ${finalDiskInfo.availableFormatted}`);
+                console.log(`Used: ${finalDiskInfo.usedPercentage}%`);
+                
+                if (initialDiskInfo) {
+                    const spaceUsed = initialDiskInfo.available - finalDiskInfo.available;
+                    console.log(`Space used by this session: ${formatBytes(spaceUsed)}`);
+                }
+                
+                console.log('====================================');
+            }
+            
+            console.log('Downloaded files:', fileCounter);
+            console.log('Errors:', errorCounter);
+            
+            // Close the Puppeteer browser
+            await browser.close();
+            console.log('Browser closed.');
+            
+            // Save results and errors to files
+            try {
+                touch('error.csv');
+                convertJsonToCsv(error, './public/error.csv', (err, errorSummary) => {
+                    if (err) {
+                        console.error('Error:', err);
+                    } else {
+                        console.log('Error CSV file has been saved:', errorSummary);
+                    }
+                });
+            } catch (err) {
+                console.error('An error occurred saving error CSV:', err);
+            }
+            
+            try {
+                // Verify all required fields are present
+                console.log('Verifying all required fields for downloadAllFiles before CSV generation...');
+                list.forEach((item, index) => {
+                    // Ensure version is in column 6 (index 5)
+                    if (typeof item.version === 'undefined') {
+                        console.log(`Adding missing version field for item ${index}`);
+                        item.version = '';
+                    }
+                    
+                    // Ensure slug is in column 8 (index 7)
+                    if (typeof item.slug === 'undefined' || item.slug === '') {
+                        console.log(`Adding missing slug field for item ${index}`);
+                        if (item.productURL) {
+                            try {
+                                // Try to extract slug from product URL
+                                const urlObj = new URL(item.productURL);
+                                const pathParts = urlObj.pathname.split('/').filter(part => part);
+                                if (pathParts.length > 0) {
+                                    // Get the last part of the path - this is the exact product slug from Real GPL
+                                    let slug = pathParts[pathParts.length - 1];
+                                    // Clean up the slug - only remove query params, keep the full slug including prefixes
+                                    slug = slug.split('?')[0];
+                                    // Don't remove "download-" prefix as it's part of the actual slug
+                                    item.slug = slug;
+                                    console.log(`Extracted exact product slug '${slug}' from productURL`);
+                                } else {
+                                    // Fallback to filename
+                                    item.slug = finalArchiveFilename.replace(/\.zip$/, '');
+                                }
+                            } catch (urlErr) {
+                                console.log(`Error extracting slug from productURL: ${urlErr.message}`);
+                                // Fallback to filename
+                                item.slug = finalArchiveFilename.replace(/\.zip$/, '');
+                            }
+                        } else if (item.filename) {
+                            item.slug = item.filename.replace(/\.zip$/, '');
+                            console.log(`Using filename-based slug: ${item.slug}`);
+                        } else {
+                            item.slug = '';
+                        }
+                    }
+                    
+                    // Ensure fileUrl is in column 9 (index 8)
+                    if (typeof item.fileUrl === 'undefined') {
+                        console.log(`Adding missing fileUrl field for item ${index}`);
+                        if (item.filename) {
+                            item.fileUrl = `${DOWNLOAD_URL}/${item.filename}`;
+                        } else {
+                            item.fileUrl = '';
+                        }
+                    }
+                });
+                
+                db.JSON(list);
+                db.sync();
+                touch('data.csv');
+                convertJsonToCsv(list, './public/data.csv', (err, dataSummary) => {
+                    if (err) {
+                        console.error('Error:', err);
+                    } else {
+                        console.log('Data CSV file has been saved:', dataSummary);
+                        
+                        // Notify plugin.php that the data is ready
+                        notifyPluginDataReady(totalDownloadedFiles, error.length)
+                            .then(response => console.log('Plugin notification sent successfully:', response))
+                            .catch(err => console.error('Failed to notify plugin:', err));
+                    }
+                });
+            } catch (err) {
+                console.error('An error occurred saving data CSV:', err);
+            }
+            
+            // Display final stats
+            console.log(`Downloaded ${totalDownloadedFiles} files with ${error.length} errors`);
+            console.log(`Skipped ${skippedFromHistory} files (already in download history)`);
+            console.log('[+] All done.');
+            
+            // Return detailed results
+            return {
+                downloadedCount: totalDownloadedFiles,
+                skippedCount: skippedFromHistory,
+                successList: list,
+                errorList: error,
+                directoryReport: directoryReport
+            };
+        } catch (e) {
+            console.error('An error occurred in processing:', e);
+            return {
+                downloadedCount: 0,
+                skippedCount: 0,
+                error: e.message,
+                directoryReport: null
+            };
+        } finally {
+            if (browser) {
+                await browser.close();
+            }
         }
-    } catch (err) {
-        console.error('Error during exit cleanup:', err);
+    } catch (outerError) {
+        console.error('An error occurred launching browser:', outerError);
+        return {
+            downloadedCount: 0,
+            skippedCount: 0,
+            error: outerError.message,
+            directoryReport: null
+        };
     }
-});
-
-process.on('SIGINT', async () => {
-    console.log('Received SIGINT - cleaning up before exit...');
-    try {
-        await cleanupAllTemporaryFiles();
-        process.exit(0);
-    } catch (err) {
-        console.error('Error during SIGINT cleanup:', err);
-        process.exit(1);
-    }
-});
-
-process.on('SIGTERM', async () => {
-    console.log('Received SIGTERM - cleaning up before exit...');
-    try {
-        await cleanupAllTemporaryFiles();
-        process.exit(0);
-    } catch (err) {
-        console.error('Error during SIGTERM cleanup:', err);
-        process.exit(1);
-    }
-});
+};
 
 // Helper function to get disk space information
 const getDiskInfo = async (path) => {
@@ -888,6 +1907,43 @@ const formatTime = (seconds) => {
     if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
     return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m ${Math.round(seconds % 60)}s`;
 };
+
+// Cleanup function to remove temporary Chrome user data directory
+const cleanupUserDataDir = () => {
+    const userDataDir = path.join(process.cwd(), 'temp_user_data');
+    if (fs.existsSync(userDataDir)) {
+        try {
+            // Use rimraf or similar library for better directory removal in production
+            const deleteDirectory = (dirPath) => {
+                if (fs.existsSync(dirPath)) {
+                    fs.readdirSync(dirPath).forEach((file) => {
+                        const curPath = path.join(dirPath, file);
+                        if (fs.lstatSync(curPath).isDirectory()) {
+                            // Recursive call
+                            deleteDirectory(curPath);
+                        } else {
+                            // Delete file
+                            fs.unlinkSync(curPath);
+                        }
+                    });
+                    fs.rmdirSync(dirPath);
+                }
+            };
+            
+            deleteDirectory(userDataDir);
+            console.log('Temporary user data directory cleaned up');
+        } catch (err) {
+            console.error('Error cleaning up user data directory:', err);
+        }
+    }
+};
+
+// Add cleanup call before exiting
+process.on('exit', cleanupUserDataDir);
+process.on('SIGINT', () => {
+    cleanupUserDataDir();
+    process.exit();
+});
 
 // Helper function to notify plugin.php that data processing is complete
 const notifyPluginDataReady = async (successCount, errorCount) => {
@@ -941,15 +1997,5 @@ const notifyPluginDataReady = async (successCount, errorCount) => {
     }
 };
 
-// Add a counter for triggering cleanup
-let downloadCounter = 0;
-const CLEANUP_FREQUENCY = 10; // Trigger cleanup after every 10 downloads
-
-// Process each title and download the files
-let fileCounter = 0;
-let errorCounter = 0;
-let skippedFromHistory = 0;
-let totalDownloadedFiles = 0; // Track total downloaded files
-
-// Reset the download counter at the start of each batch
-downloadCounter = 0;
+module.exports = scheduledTask;
+module.exports.downloadAllFiles = downloadAllFiles;
