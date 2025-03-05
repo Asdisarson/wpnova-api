@@ -28,7 +28,7 @@ The Node.js application is configured to send an update trigger after successful
 
 ```bash
 # For production
-export WORDPRESS_PLUGIN_URL=https://your-wordpress-site.com/wp-content/plugins/wpnova/plugin.php
+export WORDPRESS_PLUGIN_URL=https://wpnova.io/wp-content/plugins/wpnova/plugin.php
 
 # For development
 export WORDPRESS_PLUGIN_URL=http://localhost/wp-content/plugins/wpnova/plugin.php
@@ -49,7 +49,7 @@ No additional configuration is needed for the WordPress plugin, as it is set up 
 
 ```bash
 # Run the Node.js application with the proper environment variable
-WORDPRESS_PLUGIN_URL=https://your-wordpress-site.com/wp-content/plugins/wpnova/plugin.php node index.js
+WORDPRESS_PLUGIN_URL=https://wpnova.io/wp-content/plugins/wpnova/plugin.php node index.js
 ```
 
 ### Manual Testing
@@ -59,13 +59,13 @@ You can manually test the update system using curl:
 ```bash
 # Test the WordPress REST API endpoint
 curl -X POST \
-  https://your-wordpress-site.com/wp-json/wpnova/v1/data-ready \
+  https://wpnova.io/wp-json/wpnova/v1/data-ready \
   -H 'Content-Type: application/json' \
   -d '{"action":"data_ready"}'
 
 # Test direct access to plugin.php
 curl -X POST \
-  https://your-wordpress-site.com/wp-content/plugins/wpnova/plugin.php \
+  https://wpnova.io/wp-content/plugins/wpnova/plugin.php \
   -H 'Content-Type: application/json' \
   -d '{"action":"data_ready"}'
 ```
@@ -78,7 +78,7 @@ The Node.js application logs update trigger attempts and results to the console.
 
 ```
 Triggering product update via WordPress plugin...
-Sending update trigger to: https://your-wordpress-site.com/wp-content/plugins/wpnova/plugin.php
+Sending update trigger to: https://wpnova.io/wp-content/plugins/wpnova/plugin.php
 Update triggered successfully with status: 200
 ```
 

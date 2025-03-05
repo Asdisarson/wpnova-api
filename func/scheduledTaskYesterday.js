@@ -10,6 +10,9 @@ const convertJsonToCsv = require('./convertJsonToCsv');
 const disk = require('diskusage');
 const os = require('os');
 
+// Near the top of the file, add a constant for the download URL
+const DOWNLOAD_URL = process.env.DOWNLOAD_URL || '/downloads';
+
 // Add a universal delay function that works with any Puppeteer version
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -224,7 +227,7 @@ const watchForNewFile = (directoryPath, timeout = 120000) => {
 };
 
 // Helper function to wait for a file to finish downloading
-const waitForFileToFinish = async (filePath, checkInterval = 1000, timeout = 60000) => {
+const waitForFileToFinish = async (filePath, checkInterval = 100, timeout = 60000) => {
     return new Promise((resolve) => {
         let lastSize = 0;
         let unchangedCount = 0;
@@ -511,8 +514,7 @@ const scheduledTask = async (date = new Date()) => {
                             // Clean up the slug - keep only the actual product slug from the Real GPL URL
                             // Remove any query parameters
                             slug = slug.split('?')[0];
-                            // Remove common suffixes from Real GPL URLs
-                            slug = slug.replace(/-download$/, "").replace(/download-/, "");
+                            // Keep the full slug as is, including "download-" prefix - don't modify the product identifier
                             
                             productId = parsedUrl.searchParams.get("product_id");
                         }
@@ -526,9 +528,9 @@ const scheduledTask = async (date = new Date()) => {
                                 if (pathParts.length > 0) {
                                     // Get the last part of the path
                                     slug = pathParts[pathParts.length - 1];
-                                    // Clean up the slug
+                                    // Clean up the slug - only remove query params, keep the full slug including prefixes
                                     slug = slug.split('?')[0];
-                                    slug = slug.replace(/-download$/, "").replace(/download-/, "");
+                                    // Don't remove "download-" prefix as it's part of the actual slug
                                 }
                             } catch (urlErr) {
                                 console.log(`Error extracting slug from productURL: ${urlErr.message}`);
@@ -601,7 +603,7 @@ const scheduledTask = async (date = new Date()) => {
                         console.log(`File ${filename} already exists, skipping download`);
                         data[i].filename = filename;
                         data[i].filePath = filePath;
-                        data[i].fileUrl = path.join(process.env.DOWNLOAD_URL, filename);
+                        data[i].fileUrl = path.join(DOWNLOAD_URL, filename);
                         fileCounter++;
                         list.push(data[i]);
                         continue;
@@ -672,7 +674,7 @@ const scheduledTask = async (date = new Date()) => {
                         if (downloadSuccess.locked) {
                             console.log('Processing locked download...');
                             // Wait for any navigation or dialogs that might appear for locked downloads
-                            await page.waitForNavigation({ timeout: 10000 }).catch(() => {
+                            await page.waitForNavigation({ timeout: 100 }).catch(() => {
                                 console.log('No navigation occurred after clicking locked button');
                             });
                             
@@ -683,7 +685,7 @@ const scheduledTask = async (date = new Date()) => {
                             if (unlockElement) {
                                 console.log('Found unlock element, clicking it...');
                                 await unlockElement.click();
-                                await page.waitForNavigation({ timeout: 10000 }).catch(() => {});
+                                await page.waitForNavigation({ timeout: 100 }).catch(() => {});
                             }
                         }
                     }
@@ -755,7 +757,7 @@ const scheduledTask = async (date = new Date()) => {
                                 // Update the data with file info
                                 data[i].filename = filename;
                                 data[i].filePath = filePath;
-                                data[i].fileUrl = path.join(process.env.DOWNLOAD_URL, filename);
+                                data[i].fileUrl = path.join(DOWNLOAD_URL, filename);
                                 
                                 fileCounter++;
                                 list.push(data[i]);
@@ -772,7 +774,7 @@ const scheduledTask = async (date = new Date()) => {
                     }
                     
                     // Wait for download to complete
-                    await delay(250); // Use universal delay function
+                    await delay(100); // Use universal delay function
                 } catch (e) {
                     errorCounter++;
                     console.error(`Failed to download: ${data[i].productName}`);
@@ -826,16 +828,11 @@ const scheduledTask = async (date = new Date()) => {
                                 const urlObj = new URL(item.productURL);
                                 const pathParts = urlObj.pathname.split('/').filter(part => part);
                                 if (pathParts.length > 0) {
-                                    // Get the last part of the path - this is the exact product slug from Real GPL
-                                    let slug = pathParts[pathParts.length - 1];
-                                    // Only remove query parameters but keep the full slug otherwise
+                                    // Get the last part of the path
+                                    slug = pathParts[pathParts.length - 1];
+                                    // Clean up the slug - only remove query params, keep the full slug including prefixes
                                     slug = slug.split('?')[0];
-                                    // Don't remove the "download-" prefix as it's part of the actual Real GPL slug
-                                    item.slug = slug;
-                                    console.log(`Extracted exact product slug '${slug}' from productURL`);
-                                } else {
-                                    // Fallback to filename
-                                    item.slug = finalArchiveFilename.replace(/\.zip$/, '');
+                                    // Don't remove "download-" prefix as it's part of the actual slug
                                 }
                             } catch (urlErr) {
                                 console.log(`Error extracting slug from productURL: ${urlErr.message}`);
@@ -859,7 +856,7 @@ const scheduledTask = async (date = new Date()) => {
                     if (typeof item.fileUrl === 'undefined') {
                         console.log(`Adding missing fileUrl field for item ${index}`);
                         if (item.filename) {
-                            item.fileUrl = `${process.env.DOWNLOAD_URL}/${item.filename}`;
+                            item.fileUrl = path.join(DOWNLOAD_URL, item.filename);
                         } else {
                             item.fileUrl = '';
                         }
@@ -1317,7 +1314,7 @@ const downloadAllFiles = async (date = new Date()) => {
                         console.log(`Archive ${finalArchiveFilename} already exists, skipping download`);
                         row.filename = finalArchiveFilename;
                         row.filePath = finalArchivePath;
-                        row.fileUrl = `${process.env.DOWNLOAD_URL}/${finalArchiveFilename}`;
+                        row.fileUrl = path.join(DOWNLOAD_URL, finalArchiveFilename);
                         
                         // Add to download history
                         downloadHistory.set(productIdentifier, {
@@ -1325,7 +1322,7 @@ const downloadAllFiles = async (date = new Date()) => {
                             productName: row.productName,
                             filename: finalArchiveFilename,
                             filePath: finalArchivePath,
-                            fileUrl: `${process.env.DOWNLOAD_URL}/${finalArchiveFilename}`,
+                            fileUrl: path.join(DOWNLOAD_URL, finalArchiveFilename),
                             date: new Date().toISOString(),
                             fileSize: fs.statSync(finalArchivePath).size
                         });
@@ -1596,7 +1593,7 @@ const downloadAllFiles = async (date = new Date()) => {
                     // Update the row with file info
                     row.filename = finalArchiveFilename;
                     row.filePath = finalArchivePath;
-                    row.fileUrl = `${process.env.DOWNLOAD_URL}/${finalArchiveFilename}`;
+                    row.fileUrl = path.join(DOWNLOAD_URL, finalArchiveFilename);
                     row.downloadedFiles = downloadedFiles.length;
                     
                     // Ensure required fields are set even if they weren't extracted earlier
@@ -1629,9 +1626,9 @@ const downloadAllFiles = async (date = new Date()) => {
                                 if (pathParts.length > 0) {
                                     // Get the last part of the path - this is the exact product slug from Real GPL
                                     let slug = pathParts[pathParts.length - 1];
-                                    // Only remove query parameters but keep the full slug otherwise
+                                    // Clean up the slug - only remove query params, keep the full slug including prefixes
                                     slug = slug.split('?')[0];
-                                    // Don't remove the "download-" prefix as it's part of the actual Real GPL slug
+                                    // Don't remove "download-" prefix as it's part of the actual slug
                                     row.slug = slug;
                                     console.log(`Extracted exact product slug '${slug}' from productURL`);
                                 } else {
@@ -1655,7 +1652,7 @@ const downloadAllFiles = async (date = new Date()) => {
                         productName: row.productName,
                         filename: finalArchiveFilename,
                         filePath: finalArchivePath,
-                        fileUrl: `${process.env.DOWNLOAD_URL}/${finalArchiveFilename}`,
+                        fileUrl: path.join(DOWNLOAD_URL, finalArchiveFilename),
                         date: new Date().toISOString(),
                         fileSize: fs.existsSync(finalArchivePath) ? fs.statSync(finalArchivePath).size : 0
                     });
@@ -1774,9 +1771,9 @@ const downloadAllFiles = async (date = new Date()) => {
                                 if (pathParts.length > 0) {
                                     // Get the last part of the path - this is the exact product slug from Real GPL
                                     let slug = pathParts[pathParts.length - 1];
-                                    // Only remove query parameters but keep the full slug otherwise
+                                    // Clean up the slug - only remove query params, keep the full slug including prefixes
                                     slug = slug.split('?')[0];
-                                    // Don't remove the "download-" prefix as it's part of the actual Real GPL slug
+                                    // Don't remove "download-" prefix as it's part of the actual slug
                                     item.slug = slug;
                                     console.log(`Extracted exact product slug '${slug}' from productURL`);
                                 } else {
@@ -1805,7 +1802,7 @@ const downloadAllFiles = async (date = new Date()) => {
                     if (typeof item.fileUrl === 'undefined') {
                         console.log(`Adding missing fileUrl field for item ${index}`);
                         if (item.filename) {
-                            item.fileUrl = `${process.env.DOWNLOAD_URL}/${item.filename}`;
+                            item.fileUrl = path.join(DOWNLOAD_URL, item.filename);
                         } else {
                             item.fileUrl = '';
                         }
@@ -1942,10 +1939,10 @@ const notifyPluginDataReady = async (successCount, errorCount) => {
         console.log('Triggering product update via WordPress plugin...');
         
         // Construct the URL to plugin.php with proper path resolution
-        const pluginUrl = process.env.WORDPRESS_PLUGIN_URL || process.env.PLUGIN_URL || 'https://your-wordpress-site.com/wp-content/plugins/wpnova/plugin.php';
+        const pluginUrl = process.env.WORDPRESS_PLUGIN_URL || process.env.PLUGIN_URL || 'https://wpnova.io/wp-content/plugins/wpnova/plugin.php';
         
-        if (!pluginUrl || pluginUrl.includes('your-wordpress-site.com')) {
-            console.log('WORDPRESS_PLUGIN_URL environment variable not set. Skipping update trigger.');
+        if (!pluginUrl.includes('wpnova.io') && !pluginUrl.includes('localhost') && pluginUrl.includes('your-wordpress-site.com')) {
+            console.log('WORDPRESS_PLUGIN_URL environment variable not set correctly. Skipping update trigger.');
             return { success: false, skipped: true, error: 'Plugin URL not properly configured' };
         }
         
@@ -1967,7 +1964,8 @@ const notifyPluginDataReady = async (successCount, errorCount) => {
         console.log(`Update triggered successfully with status: ${response.status}`);
         console.log(`Response from WordPress: ${JSON.stringify(response.data)}`);
         return response.data;
-    } catch (error) {
+    }
+    catch (error) {
         console.error('Error triggering product update:');
         if (error.response) {
             // The request was made and the server responded with a status code

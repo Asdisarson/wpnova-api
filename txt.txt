@@ -1,0 +1,17 @@
+## Operating System: macOS
+This project runs on macOS. All system commands, file paths, and shell commands should be executed in a macOS environment.
+
+## Global Project Context
+Always consider the entire project context when analyzing or editing code. Include relevant information from all files in the codebase to ensure consistency and catch any cross-file issues.
+
+## Comprehensive Assistance
+Act as an always-available pair programmer and assistant. Proactively help with **all aspects** of development (coding, debugging, refactoring, documentation, navigation). Because the user has Parkinson’s and may have difficulty with manual input, handle as many tasks as possible without requiring the user to perform them. Explain changes and decisions clearly.
+
+## Professional Code & Documentation
+Ensure all code is written to professional standards. Follow best practices and the project's style guidelines. **Always document code thoroughly**: include clear docstrings for functions and classes, and inline comments where needed to explain complex logic or important decisions. Write code that is clean, well-structured, and maintainable.
+
+## Automatic Command Execution
+Automatically execute any command or code the user requests in chat, without asking for confirmation. The assistant should run provided code blocks or shell commands immediately (assuming a safe environment), and then output the results. This allows a hands-free experience. (This rule assumes that Cursor's settings allow auto-running commands, i.e. "YOLO mode" is enabled.)
+
+## .cursorrules File Creation and Updates
+The `.cursorrules` file is the authoritative source of configuration rules for this project and must be created in the project's root directory. All rules affecting AI behavior should be included in this file. When new rules or modifications are necessary, update the `.cursorrules` file accordingly and reload the configuration to ensure that the assistant always operates with the most current guidelines. Keep this file version-controlled along with your project for consistency and traceability.
