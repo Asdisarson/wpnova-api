@@ -10,8 +10,11 @@ const convertJsonToCsv = require('./convertJsonToCsv');
 const disk = require('diskusage');
 const os = require('os');
 
-// Near the top of the file, add a constant for the download URL
-const DOWNLOAD_URL = process.env.DOWNLOAD_URL || '/downloads';
+// Near the top of the file, add a constant for the download URL with proper path normalization
+// This ensures we don't get duplicate /downloads segments
+const DOWNLOAD_URL = process.env.DOWNLOAD_URL ? 
+    '/' + process.env.DOWNLOAD_URL.replace(/^\/+|\/+$/g, '') : // Remove leading and trailing slashes, then add a single leading slash
+    '/downloads';
 
 // Add a universal delay function that works with any Puppeteer version
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -534,12 +537,13 @@ const scheduledTask = async (date = new Date()) => {
                                 }
                             } catch (urlErr) {
                                 console.log(`Error extracting slug from productURL: ${urlErr.message}`);
-                                // As a fallback, create from product name
-                                slug = textWithoutVersion.toLowerCase()
-                                    .replace(/[^\w\s-]/g, '')
-                                    .replace(/\s+/g, '-')
-                                    .replace(/-+/g, '-')
-                                    .replace(/^-+|-+$/g, '');
+                                // Fallback to filename
+                                if (data[i].filename) {
+                                    slug = data[i].filename.replace(/\.zip$/, '');
+                                    console.log(`Using filename-based slug: ${slug}`);
+                                } else {
+                                    slug = '';
+                                }
                             }
                         } else {
                             // As a fallback, create from product name
@@ -603,7 +607,7 @@ const scheduledTask = async (date = new Date()) => {
                         console.log(`File ${filename} already exists, skipping download`);
                         data[i].filename = filename;
                         data[i].filePath = filePath;
-                        data[i].fileUrl = path.join(DOWNLOAD_URL, filename);
+                        data[i].fileUrl = `${DOWNLOAD_URL}/${filename}`;
                         fileCounter++;
                         list.push(data[i]);
                         continue;
@@ -757,7 +761,7 @@ const scheduledTask = async (date = new Date()) => {
                                 // Update the data with file info
                                 data[i].filename = filename;
                                 data[i].filePath = filePath;
-                                data[i].fileUrl = path.join(DOWNLOAD_URL, filename);
+                                data[i].fileUrl = `${DOWNLOAD_URL}/${filename}`;
                                 
                                 fileCounter++;
                                 list.push(data[i]);
@@ -856,7 +860,7 @@ const scheduledTask = async (date = new Date()) => {
                     if (typeof item.fileUrl === 'undefined') {
                         console.log(`Adding missing fileUrl field for item ${index}`);
                         if (item.filename) {
-                            item.fileUrl = path.join(DOWNLOAD_URL, item.filename);
+                            item.fileUrl = `${DOWNLOAD_URL}/${item.filename}`;
                         } else {
                             item.fileUrl = '';
                         }
@@ -1314,7 +1318,7 @@ const downloadAllFiles = async (date = new Date()) => {
                         console.log(`Archive ${finalArchiveFilename} already exists, skipping download`);
                         row.filename = finalArchiveFilename;
                         row.filePath = finalArchivePath;
-                        row.fileUrl = path.join(DOWNLOAD_URL, finalArchiveFilename);
+                        row.fileUrl = `${DOWNLOAD_URL}/${finalArchiveFilename}`;
                         
                         // Add to download history
                         downloadHistory.set(productIdentifier, {
@@ -1322,7 +1326,7 @@ const downloadAllFiles = async (date = new Date()) => {
                             productName: row.productName,
                             filename: finalArchiveFilename,
                             filePath: finalArchivePath,
-                            fileUrl: path.join(DOWNLOAD_URL, finalArchiveFilename),
+                            fileUrl: `${DOWNLOAD_URL}/${finalArchiveFilename}`,
                             date: new Date().toISOString(),
                             fileSize: fs.statSync(finalArchivePath).size
                         });
@@ -1593,7 +1597,7 @@ const downloadAllFiles = async (date = new Date()) => {
                     // Update the row with file info
                     row.filename = finalArchiveFilename;
                     row.filePath = finalArchivePath;
-                    row.fileUrl = path.join(DOWNLOAD_URL, finalArchiveFilename);
+                    row.fileUrl = `${DOWNLOAD_URL}/${finalArchiveFilename}`;
                     row.downloadedFiles = downloadedFiles.length;
                     
                     // Ensure required fields are set even if they weren't extracted earlier
@@ -1652,7 +1656,7 @@ const downloadAllFiles = async (date = new Date()) => {
                         productName: row.productName,
                         filename: finalArchiveFilename,
                         filePath: finalArchivePath,
-                        fileUrl: path.join(DOWNLOAD_URL, finalArchiveFilename),
+                        fileUrl: `${DOWNLOAD_URL}/${finalArchiveFilename}`,
                         date: new Date().toISOString(),
                         fileSize: fs.existsSync(finalArchivePath) ? fs.statSync(finalArchivePath).size : 0
                     });
@@ -1783,12 +1787,7 @@ const downloadAllFiles = async (date = new Date()) => {
                             } catch (urlErr) {
                                 console.log(`Error extracting slug from productURL: ${urlErr.message}`);
                                 // Fallback to filename
-                                if (item.filename) {
-                                    item.slug = item.filename.replace(/\.zip$/, '');
-                                    console.log(`Using filename-based slug: ${item.slug}`);
-                                } else {
-                                    item.slug = '';
-                                }
+                                item.slug = finalArchiveFilename.replace(/\.zip$/, '');
                             }
                         } else if (item.filename) {
                             item.slug = item.filename.replace(/\.zip$/, '');
@@ -1802,7 +1801,7 @@ const downloadAllFiles = async (date = new Date()) => {
                     if (typeof item.fileUrl === 'undefined') {
                         console.log(`Adding missing fileUrl field for item ${index}`);
                         if (item.filename) {
-                            item.fileUrl = path.join(DOWNLOAD_URL, item.filename);
+                            item.fileUrl = `${DOWNLOAD_URL}/${item.filename}`;
                         } else {
                             item.fileUrl = '';
                         }
