@@ -427,23 +427,49 @@ const scheduledTask = async (date = new Date()) => {
                     // This determines date of the update
                     if (theDate === date) {
                         try {
+                            // Basic row information
                             const id = row.getAttribute('data-id');
+                            const cartIn = row.getAttribute('data-cart-in') || '0';
                             const productName = row.querySelector('.awcpt-title').innerText;
-                            const downloadLink = row.querySelector('.awcpt-shortcode-wrap a').getAttribute('href');
-                            const downloadButtonClass = row.querySelector('.awcpt-shortcode-wrap a').className;
                             const productURL = row.querySelector('.awcpt-prdTitle-col a').getAttribute('href');
-                            const isLocked = downloadButtonClass.includes('locked');
-                            const isUnlocked = downloadButtonClass.includes('unlocked');
+                            
+                            // Download button information
+                            let downloadLink = '';
+                            let downloadButtonClass = '';
+                            let buttonKey = '';
+                            let buttonName = '';
+                            let isLocked = true;
+                            let isUnlocked = false;
+                            
+                            // Get download button if available
+                            const downloadButton = row.querySelector('.awcpt-shortcode-wrap a.yith-wcmbs-download-button');
+                            if (downloadButton) {
+                                downloadLink = downloadButton.getAttribute('href') || '';
+                                downloadButtonClass = downloadButton.className || '';
+                                buttonKey = downloadButton.getAttribute('data-key') || '';
+                                buttonName = downloadButton.querySelector('.yith-wcmbs-download-button__name')?.innerText || '';
+                                isLocked = downloadButtonClass.includes('locked');
+                                isUnlocked = downloadButtonClass.includes('unlocked');
+                            }
+                            
+                            // Check for "not enough credits" message
+                            const lockedMessage = row.querySelector('.yith-wcmbs-product-download-box__non-sufficient-credits');
+                            const hasInsufficientCredits = !!lockedMessage;
 
                             // Create an object with the extracted data for each row
                             const rowData = {
                                 id,
+                                cartIn,
                                 productName,
                                 date,
                                 downloadLink,
+                                downloadButtonClass,
+                                buttonKey,
+                                buttonName,
                                 productURL,
                                 isLocked,
                                 isUnlocked,
+                                hasInsufficientCredits,
                                 // Initialize these fields to ensure they're always present in the CSV
                                 version: '',
                                 slug: '',
@@ -452,12 +478,11 @@ const scheduledTask = async (date = new Date()) => {
                                 filePath: ''
                             };
 
-                            rowDataArray.push(rowData); }
-                        catch (e) {
+                            rowDataArray.push(rowData);
+                        } catch (e) {
                             console.error(e);
                         }
                     }
-
                 }
                 return rowDataArray;
             }, theDate);
@@ -763,7 +788,9 @@ const scheduledTask = async (date = new Date()) => {
                                 // Update the data with file info
                                 data[i].filename = filename;
                                 data[i].filePath = filePath;
-                                data[i].fileUrl = `${DOWNLOAD_URL}/${filename}`;
+                                // Properly format the download URL to avoid double paths
+                                const formattedDownloadUrl = DOWNLOAD_URL.startsWith('/') ? DOWNLOAD_URL : `/${DOWNLOAD_URL}`;
+                                data[i].fileUrl = `${formattedDownloadUrl}/${filename}`.replace(/\/+/g, '/');
                                 
                                 fileCounter++;
                                 list.push(data[i]);
@@ -862,7 +889,9 @@ const scheduledTask = async (date = new Date()) => {
                     if (typeof item.fileUrl === 'undefined') {
                         console.log(`Adding missing fileUrl field for item ${index}`);
                         if (item.filename) {
-                            item.fileUrl = `${DOWNLOAD_URL}/${item.filename}`;
+                            // Properly format the download URL to avoid double paths
+                            const formattedDownloadUrl = DOWNLOAD_URL.startsWith('/') ? DOWNLOAD_URL : `/${DOWNLOAD_URL}`;
+                            item.fileUrl = `${formattedDownloadUrl}/${item.filename}`.replace(/\/+/g, '/');
                         } else {
                             item.fileUrl = '';
                         }
@@ -1176,28 +1205,47 @@ const downloadAllFiles = async (date = new Date()) => {
                         
                         // Filter rows by date
                         if (targetDate === rowDate) {
+                            // Basic row information
                             const id = row.getAttribute('data-id');
-                            const cartIn = row.getAttribute('data-cart-in');
+                            const cartIn = row.getAttribute('data-cart-in') || '0';
                             const productName = row.querySelector('.awcpt-title').innerText;
+                            const productURL = row.querySelector('.awcpt-prdTitle-col a').getAttribute('href');
                             
                             // Get all download buttons in this row
                             const downloadBtns = row.querySelectorAll('.awcpt-shortcode-wrap a.yith-wcmbs-download-button');
-                            if (downloadBtns.length === 0) continue; // Skip if no download buttons
+                            
+                            // Check for "not enough credits" message
+                            const lockedMessage = row.querySelector('.yith-wcmbs-product-download-box__non-sufficient-credits');
+                            const hasInsufficientCredits = !!lockedMessage;
+                            
+                            // Default values if no buttons are found
+                            let hasButtons = downloadBtns.length > 0;
+                            let downloadLink = '';
+                            let downloadButtonClass = '';
+                            let isLocked = true;
+                            let isUnlocked = false;
                             
                             // Collect information about all buttons
                             const buttons = [];
                             for (const btn of downloadBtns) {
-                                buttons.push({
-                                    href: btn.getAttribute('href'),
-                                    className: btn.className,
-                                    dataKey: btn.getAttribute('data-key'),
+                                const btnInfo = {
+                                    href: btn.getAttribute('href') || '',
+                                    className: btn.className || '',
+                                    dataKey: btn.getAttribute('data-key') || '',
                                     buttonName: btn.querySelector('.yith-wcmbs-download-button__name')?.innerText || '',
                                     isLocked: btn.classList.contains('locked'),
                                     isUnlocked: btn.classList.contains('unlocked')
-                                });
+                                };
+                                buttons.push(btnInfo);
+                                
+                                // Use the first button for main product information if needed
+                                if (buttons.length === 1) {
+                                    downloadLink = btnInfo.href;
+                                    downloadButtonClass = btnInfo.className;
+                                    isLocked = btnInfo.isLocked;
+                                    isUnlocked = btnInfo.isUnlocked;
+                                }
                             }
-                            
-                            const productURL = row.querySelector('.awcpt-prdTitle-col a').getAttribute('href');
                             
                             // Create an object with the extracted data for each row
                             const rowData = {
@@ -1206,15 +1254,27 @@ const downloadAllFiles = async (date = new Date()) => {
                                 productName,
                                 date: rowDate,
                                 productURL,
+                                downloadLink,
+                                downloadButtonClass,
+                                isLocked,
+                                isUnlocked,
+                                hasInsufficientCredits,
+                                hasButtons,
                                 multipleButtons: buttons.length > 1,
                                 buttonCount: buttons.length,
-                                buttons: buttons
+                                buttons: buttons,
+                                // Initialize these fields to ensure they're always present in the CSV
+                                version: '',
+                                slug: '',
+                                fileUrl: '',
+                                filename: '',
+                                filePath: ''
                             };
                             
                             rowDataArray.push(rowData);
                         }
-                    } catch (e) {
-                        console.error(`Error processing row: ${e.message}`);
+                    } catch (error) {
+                        console.error(`Error processing row: ${error.message}`);
                     }
                 }
                 
@@ -1610,7 +1670,9 @@ const downloadAllFiles = async (date = new Date()) => {
                     // Update the row with file info
                     row.filename = finalArchiveFilename;
                     row.filePath = finalArchivePath;
-                    row.fileUrl = `${DOWNLOAD_URL}/${finalArchiveFilename}`;
+                    // Properly format the download URL to avoid double paths
+                    const formattedDownloadUrl = DOWNLOAD_URL.startsWith('/') ? DOWNLOAD_URL : `/${DOWNLOAD_URL}`;
+                    row.fileUrl = `${formattedDownloadUrl}/${finalArchiveFilename}`.replace(/\/+/g, '/');
                     row.downloadedFiles = downloadedFiles.length;
                     
                     // Ensure required fields are set even if they weren't extracted earlier
@@ -1669,7 +1731,8 @@ const downloadAllFiles = async (date = new Date()) => {
                         productName: row.productName,
                         filename: finalArchiveFilename,
                         filePath: finalArchivePath,
-                        fileUrl: `${DOWNLOAD_URL}/${finalArchiveFilename}`,
+                        // Properly format the download URL to avoid double paths
+                        fileUrl: `${DOWNLOAD_URL.startsWith('/') ? DOWNLOAD_URL : `/${DOWNLOAD_URL}`}/${finalArchiveFilename}`.replace(/\/+/g, '/'),
                         date: new Date().toISOString(),
                         fileSize: fs.statSync(finalArchivePath).size
                     });
@@ -1814,7 +1877,9 @@ const downloadAllFiles = async (date = new Date()) => {
                     if (typeof item.fileUrl === 'undefined') {
                         console.log(`Adding missing fileUrl field for item ${index}`);
                         if (item.filename) {
-                            item.fileUrl = `${DOWNLOAD_URL}/${item.filename}`;
+                            // Properly format the download URL to avoid double paths
+                            const formattedDownloadUrl = DOWNLOAD_URL.startsWith('/') ? DOWNLOAD_URL : `/${DOWNLOAD_URL}`;
+                            item.fileUrl = `${formattedDownloadUrl}/${item.filename}`.replace(/\/+/g, '/');
                         } else {
                             item.fileUrl = '';
                         }
