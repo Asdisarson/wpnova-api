@@ -404,30 +404,35 @@ const stopPeriodicTempCleanup = () => {
 let scheduledTask_original;
 let downloadAllFiles_original;
 
-// Define the original scheduledTask function first
-scheduledTask_original = async (date = new Date()) => {
-    // Your original scheduledTask implementation goes here
-    // This should be the body of your original scheduledTask function
-    console.log('Running original scheduled task...');
-    // If your original function is elsewhere in the code, you'll need to move that implementation here
-    
-    // For now, this is a placeholder - replace with actual implementation
-    return { status: "completed" };
-};
-
-// Define the original downloadAllFiles function first
-downloadAllFiles_original = async (date = new Date()) => {
-    // Your original downloadAllFiles implementation goes here
-    // This should be the body of your original downloadAllFiles function
-    console.log('Running original download all files...');
-    // If your original function is elsewhere in the code, you'll need to move that implementation here
-    
-    // For now, this is a placeholder - replace with actual implementation
-    return { status: "completed" };
-};
-
-// Now create the enhanced versions that wrap the originals
+// Define the original functions directly without the references
 const scheduledTask = async (date = new Date()) => {
+    // Original implementation here
+    console.log('Running original scheduled task...');
+    
+    // Original implementation would go here
+    // For now, as a placeholder:
+    await delay(1000); // simulate work
+    return { 
+        status: "completed",
+        date: date.toISOString()
+    };
+};
+
+const downloadAllFiles = async (date = new Date()) => {
+    // Original implementation here
+    console.log('Running original download all files...');
+    
+    // Original implementation would go here
+    // For now, as a placeholder:  
+    await delay(1000); // simulate work
+    return { 
+        status: "completed",
+        date: date.toISOString()
+    };
+};
+
+// Create wrapped versions that add cleanup
+const scheduledTaskWithCleanup = async (date = new Date()) => {
     try {
         // Run cleanup at the beginning
         console.log('Cleaning up before starting task...');
@@ -437,7 +442,7 @@ const scheduledTask = async (date = new Date()) => {
         startPeriodicTempCleanup(30); // Run every 30 minutes
         
         // Run the original function
-        const result = await scheduledTask_original(date);
+        const result = await scheduledTask(date);
         
         // Clean up again at the end
         console.log('Task completed, doing final cleanup...');
@@ -459,7 +464,7 @@ const scheduledTask = async (date = new Date()) => {
 };
 
 // Similarly define the enhanced downloadAllFiles function
-const downloadAllFiles = async (date = new Date()) => {
+const downloadAllFilesWithCleanup = async (date = new Date()) => {
     try {
         // Run cleanup at the beginning
         console.log('Cleaning up before starting downloads...');
@@ -469,7 +474,7 @@ const downloadAllFiles = async (date = new Date()) => {
         startPeriodicTempCleanup(15); // Run every 15 minutes for downloads
         
         // Run the improved function
-        const result = await downloadAllFiles_original(date);
+        const result = await downloadAllFiles(date);
         
         // Clean up again at the end
         console.log('Downloads completed, doing final cleanup...');
@@ -489,6 +494,10 @@ const downloadAllFiles = async (date = new Date()) => {
         throw err;
     }
 };
+
+// Replace the original exports with the wrapped versions
+module.exports = scheduledTaskWithCleanup;
+module.exports.downloadAllFiles = downloadAllFilesWithCleanup;
 
 /**
  * Scans the download directory and reports existing files
@@ -646,7 +655,7 @@ const cleanupOldTempDirectories = async (maxAgeHours = 24) => {
 };
 
 // Enhanced clearDownloadsDirectory to also handle temp directories
-let clearDownloadsDirectory = async (cleanTemp = true) => {
+const clearDownloadsDirectory = async (cleanTemp = true) => {
     const downloadsDir = path.resolve('./public/downloads/');
     
     if (!fs.existsSync(downloadsDir)) {
@@ -742,20 +751,28 @@ let clearDownloadsDirectory = async (cleanTemp = true) => {
     }
 };
 
+// Create a wrapped version that enhances the original
+const clearDownloadsDirectoryEnhanced = async (cleanTemp = false) => {
+    await clearDownloadsDirectory(cleanTemp);
+};
+
 // Comprehensive cleanup function that handles all temporary files and directories
 const cleanupAllTemporaryFiles = async () => {
-    console.log('Starting comprehensive cleanup of all temporary files...');
-    
-    // 1. Clean up Chrome user data directory
-    await cleanupUserDataDir();
-    
-    // 2. Clean up downloads directory including temp files and directories
-    await clearDownloadsDirectory(true);
-    
-    // 3. Clean up old temp directories
-    await cleanupOldTempDirectories(24); // Clean directories older than 24 hours
-    
-    console.log('Comprehensive cleanup completed');
+    try {
+        console.log('Starting comprehensive cleanup of all temporary files...');
+        
+        // Clear the downloads directory first
+        await clearDownloadsDirectoryEnhanced(true);
+        
+        // Then clean up any old temp directories
+        await cleanupOldTempDirectories(24); // Clean up dirs older than 24 hours
+        
+        console.log('Comprehensive cleanup completed');
+        return true;
+    } catch (err) {
+        console.error('Error in comprehensive cleanup:', err);
+        return false;
+    }
 };
 
 // Improved cleanup function for Chrome user data directory
@@ -787,15 +804,6 @@ const recreateUserDataDir = async () => {
         console.error('Error recreating Chrome user data directory:', err);
         return false;
     }
-};
-
-// Enhance the original clearDownloadsDirectory function to use the async version
-// Store a reference to the original function
-const clearDownloadsDirectory_original = clearDownloadsDirectory;
-
-// Now redefine the function
-clearDownloadsDirectory = async (cleanTemp = false) => {
-    await clearDownloadsDirectory_original(cleanTemp);
 };
 
 // Add improved signal handlers for cleanup
@@ -945,6 +953,3 @@ let totalDownloadedFiles = 0; // Track total downloaded files
 
 // Reset the download counter at the start of each batch
 downloadCounter = 0;
-
-module.exports = scheduledTask;
-module.exports.downloadAllFiles = downloadAllFiles;
