@@ -586,7 +586,9 @@ const scheduledTask = async (date = new Date()) => {
             // Process each title and download the files
             let fileCounter = 0;
             let errorCounter = 0;
-
+            let skippedFromHistory = 0;
+            let totalDownloadedFiles = 0; // Track total downloaded files
+            
             // Ensure download directory exists
             const downloadPath = path.resolve('./public/downloads/');
             if (!fs.existsSync(downloadPath)) {
@@ -877,7 +879,7 @@ const scheduledTask = async (date = new Date()) => {
                         console.log('Data CSV file has been saved:', dataSummary);
                         
                         // Notify plugin.php that the data is ready
-                        notifyPluginDataReady(list.length, error.length)
+                        notifyPluginDataReady(fileCounter, error.length)
                             .then(response => console.log('Plugin notification sent successfully:', response))
                             .catch(err => console.error('Failed to notify plugin:', err));
                     }
@@ -1277,15 +1279,54 @@ const downloadAllFiles = async (date = new Date()) => {
                 
                 try {
                     // Extract a filename from the product name
-                    const slugFromName = row.productName
+                    let slugFromName = row.productName
                         .toLowerCase()
                         .replace(/[^\w\s-]/g, '')
                         .replace(/\s+/g, '-')
                         .replace(/-+/g, '-')
                         .replace(/^-+|-+$/g, '');
                     
+                    // Prevent duplicate name parts in filenames
+                    const parts = slugFromName.split('-');
+                    if (parts.length > 3) {
+                        // Check for duplicate segments
+                        const uniqueParts = [];
+                        const seenParts = new Set();
+                        
+                        for (const part of parts) {
+                            // Only consider substantial parts (longer than 3 chars)
+                            if (part.length > 3) {
+                                // Check if we've seen this part or a similar one before
+                                let isDuplicate = false;
+                                for (const seenPart of seenParts) {
+                                    if (part.includes(seenPart) || seenPart.includes(part)) {
+                                        isDuplicate = true;
+                                        break;
+                                    }
+                                }
+                                
+                                if (!isDuplicate) {
+                                    uniqueParts.push(part);
+                                    seenParts.add(part);
+                                }
+                            } else {
+                                // Keep short parts as they might be important connectors
+                                uniqueParts.push(part);
+                            }
+                        }
+                        
+                        // Only use unique parts if we have enough to make a meaningful name
+                        if (uniqueParts.length >= 2) {
+                            slugFromName = uniqueParts.join('-');
+                        }
+                    }
+                    
                     // Create a unique identifier for this product
                     const productIdentifier = `${row.id}-${slugFromName}`;
+                    
+                    // Create a proper filename for the archive
+                    const finalArchiveFilename = `${slugFromName}-${row.id}.zip`;
+                    const finalArchivePath = path.join(downloadPath, finalArchiveFilename);
                     
                     // Check download history first
                     if (downloadHistory.has(productIdentifier)) {
@@ -1307,34 +1348,6 @@ const downloadAllFiles = async (date = new Date()) => {
                             console.log(`File in history doesn't exist anymore, will re-download`);
                             // Continue with download since the file is missing
                         }
-                    }
-                    
-                    // Create a unique filename for the final archive
-                    const finalArchiveFilename = `${slugFromName}-${row.id}.zip`;
-                    const finalArchivePath = path.join(downloadPath, finalArchiveFilename);
-                    
-                    // Check if archive already exists (to avoid redownloading)
-                    if (fs.existsSync(finalArchivePath)) {
-                        console.log(`Archive ${finalArchiveFilename} already exists, skipping download`);
-                        row.filename = finalArchiveFilename;
-                        row.filePath = finalArchivePath;
-                        row.fileUrl = `${DOWNLOAD_URL}/${finalArchiveFilename}`;
-                        
-                        // Add to download history
-                        downloadHistory.set(productIdentifier, {
-                            id: row.id,
-                            productName: row.productName,
-                            filename: finalArchiveFilename,
-                            filePath: finalArchivePath,
-                            fileUrl: `${DOWNLOAD_URL}/${finalArchiveFilename}`,
-                            date: new Date().toISOString(),
-                            fileSize: fs.statSync(finalArchivePath).size
-                        });
-                        downloadHistory.sync();
-                        
-                        fileCounter++;
-                        list.push(row);
-                        continue;
                     }
                     
                     // Create a temporary directory for downloaded files for this row
@@ -1658,7 +1671,7 @@ const downloadAllFiles = async (date = new Date()) => {
                         filePath: finalArchivePath,
                         fileUrl: `${DOWNLOAD_URL}/${finalArchiveFilename}`,
                         date: new Date().toISOString(),
-                        fileSize: fs.existsSync(finalArchivePath) ? fs.statSync(finalArchivePath).size : 0
+                        fileSize: fs.statSync(finalArchivePath).size
                     });
                     downloadHistory.sync();
                     
