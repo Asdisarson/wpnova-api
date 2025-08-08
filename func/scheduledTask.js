@@ -63,13 +63,52 @@ const scheduledTask = async () => {
 
             var username =  process.env.USERNAME;
             var password = process.env.PASSWORD;
+            
             // Fill in the login credentials
             console.log('Typing username...');
-
             await page.type('#username',username.toString());
 
             console.log('Typing password...');
             await page.type('#password',password.toString());
+            
+            // Check if CAPTCHA is present and solve it
+            console.log('Checking for humanity verification CAPTCHA...');
+            try {
+                const captchaElement = await page.$('div.humanity');
+                if (captchaElement) {
+                    console.log('CAPTCHA detected, solving math equation...');
+                    
+                    // Get the math equation text
+                    const captchaText = await page.evaluate(() => {
+                        const humanityDiv = document.querySelector('div.humanity');
+                        return humanityDiv ? humanityDiv.textContent : '';
+                    });
+                    
+                    console.log('CAPTCHA text:', captchaText);
+                    
+                    // Extract numbers from the equation (format: "Prove your humanity: X + Y = ")
+                    const mathMatch = captchaText.match(/(\d+)\s*\+\s*(\d+)/);
+                    if (mathMatch) {
+                        const num1 = parseInt(mathMatch[1]);
+                        const num2 = parseInt(mathMatch[2]);
+                        const answer = num1 + num2;
+                        
+                        console.log(`Solving: ${num1} + ${num2} = ${answer}`);
+                        
+                        // Fill in the answer
+                        await page.type('input[name="brute_num"]', answer.toString());
+                        console.log('CAPTCHA solved successfully');
+                    } else {
+                        console.log('Could not parse math equation from CAPTCHA');
+                    }
+                } else {
+                    console.log('No CAPTCHA present, proceeding with login');
+                }
+            } catch (captchaError) {
+                console.log('Error handling CAPTCHA:', captchaError.message);
+                console.log('Proceeding with login attempt anyway');
+            }
+            
             // Click the login button and wait for navigation
             console.log('Clicking the login button...');
             await Promise.all([
