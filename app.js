@@ -6,7 +6,6 @@ var cookieParser = require('cookie-parser');
 var logger = require('morgan');
 const fs = require('fs');
 const dbJson = require('simple-json-db')
-const scheduledTask = require('./func/scheduledTask');
 const { downloadAllFiles } = require('./func/scheduledTaskYesterday'); // Import the optimized function
 var date = new Date();
 var app = express();
