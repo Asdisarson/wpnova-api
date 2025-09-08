@@ -6,8 +6,9 @@ RUN apt-get update \
       --no-install-recommends \
     && wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/googlechrome-linux-keyring.gpg \
     && sh -c 'echo "deb [arch=amd64 signed-by=/usr/share/keyrings/googlechrome-linux-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list' \
+    && dpkg --add-architecture amd64 \
     && apt-get update \
-    && apt-get install -y google-chrome-stable \
+    && apt-get install -y google-chrome-stable:amd64 \
     && rm -rf /var/lib/apt/lists/* \
     && npm install -g npm@10.8.1
 
