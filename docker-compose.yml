@@ -16,19 +16,3 @@ services:
     volumes:
       - ./public:/home/node/app/public
     restart: unless-stopped
-
-  # Python web scraper service
-  web-scraper-wpnova:
-    build:
-      context: .
-      dockerfile: Dockerfile.python
-    ports:
-      - "8000:8000"
-    environment:
-      - USERNAME=${USERNAME}
-      - PASSWORD=${PASSWORD}
-    volumes:
-      - ./public:/app/public
-    restart: unless-stopped
-    depends_on:
-      - wpnova-api

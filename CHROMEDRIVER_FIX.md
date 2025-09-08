@@ -88,14 +88,6 @@ chromedriver --version
 
 Both should show compatible versions.
 
-## Python Service Configuration
-
-The Python FastAPI service (`main.py`) now includes proper error handling and ChromeDriver configuration. The service will:
-
-1. Initialize ChromeDriver with proper options
-2. Handle version mismatches gracefully
-3. Provide health check endpoints
-4. Log detailed error information
 
 ## Environment Variables
 
@@ -131,30 +123,11 @@ DOWNLOAD_URL=/downloads
    docker-compose restart
    ```
 
-### If the Python service fails to initialize:
-
-1. Check the logs:
-   ```bash
-   docker-compose logs web-scraper-wpnova
-   ```
-
-2. Verify Chrome installation:
-   ```bash
-   docker exec -it <container> google-chrome --version
-   ```
-
-3. Check ChromeDriver installation:
-   ```bash
-   docker exec -it <container> chromedriver --version
-   ```
 
 ## Files Created/Modified
 
 - `Dockerfile` - Updated with automatic ChromeDriver version detection
-- `Dockerfile.python` - New Dockerfile for Python service
-- `docker-compose.yml` - Orchestration for both services
-- `requirements.txt` - Python dependencies
-- `main.py` - Python FastAPI web scraper service
+- `docker-compose.yml` - Orchestration for the Node.js service
 - `CHROMEDRIVER_FIX.md` - This documentation
 
 ## Next Steps
@@ -165,13 +138,10 @@ DOWNLOAD_URL=/downloads
    docker-compose up --build
    ```
 
-2. Test the services:
+2. Test the service:
    ```bash
    # Test Node.js service
    curl http://localhost:3000/refresh
-
-   # Test Python service
-   curl http://localhost:8000/health
    ```
 
 3. Monitor the logs for any remaining issues:
