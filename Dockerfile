@@ -1,50 +1,52 @@
-FROM node:20
+# Use Node.js 20 Alpine for smaller image size
+FROM node:20-alpine
 
-# Install necessary dependencies
-RUN apt-get update \
-    && apt-get install -y wget gnupg curl ca-certificates git fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-kacst fonts-freefont-ttf libxss1 \
-      --no-install-recommends \
-    && wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/googlechrome-linux-keyring.gpg \
-    && sh -c 'echo "deb [arch=amd64 signed-by=/usr/share/keyrings/googlechrome-linux-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list' \
-    && dpkg --add-architecture amd64 \
-    && apt-get update \
-    && apt-get install -y google-chrome-stable:amd64 \
-    && rm -rf /var/lib/apt/lists/* \
-    && npm install -g npm@10.8.1
+# Install necessary dependencies for Puppeteer and Chrome
+RUN apk add --no-cache \
+    chromium \
+    nss \
+    freetype \
+    freetype-dev \
+    harfbuzz \
+    ca-certificates \
+    ttf-freefont \
+    wget \
+    curl \
+    unzip
 
-# Install ChromeDriver that matches Chrome version
-RUN CHROME_VERSION=$(google-chrome --version | grep -oE '[0-9]+\.[0-9]+' | head -1) \
-    && CHROMEDRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_VERSION") \
-    && if [ "$CHROMEDRIVER_VERSION" = "" ] || echo "$CHROMEDRIVER_VERSION" | grep -q "Error"; then \
-        CHROMEDRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE"); \
-    fi \
-    && wget -O /tmp/chromedriver.zip "https://chromedriver.storage.googleapis.com/$CHROMEDRIVER_VERSION/chromedriver_linux64.zip" \
-    && unzip /tmp/chromedriver.zip -d /usr/local/bin/ \
-    && rm /tmp/chromedriver.zip \
-    && chmod +x /usr/local/bin/chromedriver
+# Tell Puppeteer to skip installing Chromium. We'll be using the installed package.
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
-# Set up the application directory and permissions
-RUN mkdir -p /home/node/app
-WORKDIR /home/node/app
+# Create app directory
+WORKDIR /app
 
-# Clone repository and set permissions
-RUN git clone https://github.com/Asdisarson/wpnova-api.git . \
-    && chown -R node:node /home/node/app
+# Copy package files
+COPY package*.json ./
 
-# Install dependencies and configure environment as root
-RUN npm init -y && \
-    npm i puppeteer@latest
+# Install dependencies
+RUN npm ci --only=production && npm cache clean --force
 
-# Ensure Puppeteer's cache directory exists and has correct permissions
-RUN mkdir -p /home/node/.cache \
-    && chown -R node:node /home/node/app /home/node/app/node_modules /home/node/.cache
+# Copy application code
+COPY . .
 
-# Set user for running the application
-USER node
+# Create non-root user
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nodeuser -u 1001
 
-# Configure Puppeteer to use installed Chrome
-ENV PUPPETEER_EXECUTABLE_PATH="/usr/bin/google-chrome-stable"
+# Change ownership of the app directory
+RUN chown -R nodeuser:nodejs /app
 
-# Default command to start the application
-CMD ["node", "bin/www"]
+# Switch to non-root user
+USER nodeuser
+
+# Expose port
+EXPOSE 3000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:3000/ || exit 1
+
+# Start the application
+CMD ["npm", "start"]
 

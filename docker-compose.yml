@@ -13,6 +13,8 @@ services:
       - USERNAME=${USERNAME}
       - PASSWORD=${PASSWORD}
       - DOWNLOAD_URL=${DOWNLOAD_URL}
+      - PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+      - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
     volumes:
-      - ./public:/home/node/app/public
+      - ./public:/app/public
     restart: unless-stopped

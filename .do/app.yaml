@@ -1,0 +1,30 @@
+name: wpnova-api
+services:
+- name: web
+  source_dir: /
+  github:
+    repo: Asdisarson/wpnova-api
+    branch: main
+  run_command: npm start
+  environment_slug: node-js
+  instance_count: 1
+  instance_size_slug: basic-xxs
+  http_port: 3000
+  routes:
+  - path: /
+  envs:
+  - key: NODE_ENV
+    value: production
+  - key: PUPPETEER_SKIP_CHROMIUM_DOWNLOAD
+    value: "true"
+  - key: PUPPETEER_EXECUTABLE_PATH
+    value: "/usr/bin/chromium-browser"
+  - key: USERNAME
+    value: ${USERNAME}
+    type: SECRET
+  - key: PASSWORD
+    value: ${PASSWORD}
+    type: SECRET
+  - key: DOWNLOAD_URL
+    value: ${DOWNLOAD_URL}
+    type: SECRET
