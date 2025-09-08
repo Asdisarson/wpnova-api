@@ -1,5 +1,9 @@
 FROM node:20
 
+# Build arguments for GitHub credentials
+ARG GITHUB_USERNAME
+ARG GITHUB_PASSWORD
+
 # Install necessary dependencies
 RUN apt-get update \
     && apt-get install -y wget gnupg \
@@ -19,8 +23,8 @@ RUN mkdir -p /home/node/app
 WORKDIR /home/node/app
 
 
-# Clone repository and set permissions
-RUN git clone -b old https://github.com/Asdisarson/wpnova-api.git . \
+# Clone repository with GitHub credentials and set permissions
+RUN git clone -b old https://${GITHUB_USERNAME}:${GITHUB_PASSWORD}@github.com/Asdisarson/wpnova-api.git . \
     && chown -R node:node /home/node/app
 
 # Install dependencies and configure environment as root
@@ -36,6 +40,10 @@ USER node
 
 # Configure Puppeteer to use installed Chrome
 ENV PUPPETEER_EXECUTABLE_PATH="/usr/bin/google-chrome-stable"
+
+# Set environment variables for application credentials
+ENV USERNAME=${USERNAME}
+ENV PASSWORD=${PASSWORD}
 
 # Default command to start the application
 CMD ["node", "bin/www"]
