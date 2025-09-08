@@ -81,3 +81,4 @@ Make sure to set these in your DigitalOcean App Platform dashboard:
 - View logs in the DigitalOcean App Platform dashboard
 - Monitor resource usage and scaling
 - Set up alerts for errors or high resource usage
+

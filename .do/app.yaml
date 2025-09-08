@@ -28,3 +28,4 @@ services:
   - key: DOWNLOAD_URL
     value: ${DOWNLOAD_URL}
     type: SECRET
+
