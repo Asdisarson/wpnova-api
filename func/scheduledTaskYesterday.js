@@ -19,6 +19,28 @@ const DOWNLOAD_URL = process.env.DOWNLOAD_URL ?
 // Add a universal delay function that works with any Puppeteer version
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+// Function to get a random user agent
+const getRandomUserAgent = () => {
+    const userAgents = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/120.0',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/121.0',
+        'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/121.0',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/119.0.0.0 Safari/537.36'
+    ];
+    
+    return userAgents[Math.floor(Math.random() * userAgents.length)];
+};
+
 // Create a download history database to prevent duplicates
 const downloadHistoryPath = path.join(__dirname, 'download_history.json');
 // Ensure the file exists
@@ -343,6 +365,11 @@ const scheduledTask = async (date = new Date()) => {
         // Create a new page
         const page = await browser.newPage();
         page.setDefaultTimeout(0);
+
+        // Set random user agent
+        const userAgent = getRandomUserAgent();
+        console.log(`Using user agent: ${userAgent}`);
+        await page.setUserAgent(userAgent);
 
         // Set download behavior using CDP (Chrome DevTools Protocol)
         const client = await page.target().createCDPSession();
@@ -1122,6 +1149,11 @@ const downloadAllFiles = async (date = new Date()) => {
         // Create a new page
         const page = await browser.newPage();
         page.setDefaultTimeout(0);
+
+        // Set random user agent
+        const userAgent = getRandomUserAgent();
+        console.log(`Using user agent: ${userAgent}`);
+        await page.setUserAgent(userAgent);
         
         // Set download behavior using CDP (Chrome DevTools Protocol)
         const client = await page.target().createCDPSession();
