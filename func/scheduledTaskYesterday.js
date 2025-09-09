@@ -1,4 +1,11 @@
 const puppeteer = require('puppeteer');
+const { 
+    createCloudflareBypassBrowser, 
+    navigateWithRetry, 
+    handleCloudflareChallenge, 
+    addHumanLikeBehavior, 
+    randomDelay 
+} = require('./cloudflareBypass');
 const JSONdb = require('simple-json-db');
 const fs = require('fs');
 const path = require('path');
@@ -352,24 +359,12 @@ const scheduledTask = async (date = new Date()) => {
             touch('index.html');
         }
 
-        // Launch Puppeteer browser
-        console.log('Launching Puppeteer browser...');
-        const browser = await puppeteer.launch({
-            headless: true,
-            args: ['--no-sandbox', '--disable-setuid-sandbox'],
-            defaultViewport: null,
-            // Explicitly set download preferences to prevent using system Downloads folder
-            userDataDir: path.join(process.cwd(), 'temp_user_data')
-        });
-
-        // Create a new page
-        const page = await browser.newPage();
-        page.setDefaultTimeout(0);
-
-        // Set random user agent
-        const userAgent = getRandomUserAgent();
-        console.log(`Using user agent: ${userAgent}`);
-        await page.setUserAgent(userAgent);
+        // Launch Puppeteer browser with Cloudflare bypass
+        console.log('Launching Puppeteer browser with Cloudflare bypass...');
+        const { browser, page } = await createCloudflareBypassBrowser();
+        
+        // Add human-like behavior
+        await addHumanLikeBehavior(page);
 
         // Set download behavior using CDP (Chrome DevTools Protocol)
         const client = await page.target().createCDPSession();
@@ -403,7 +398,7 @@ const scheduledTask = async (date = new Date()) => {
         try {
             // Go to the login page
             console.log('Going to the login page...');
-            await page.goto('https://www.realgpl.com/my-account/');
+            await navigateWithRetry(page, 'https://www.realgpl.com/my-account/');
 
             try {
                 //consent label
@@ -432,7 +427,7 @@ const scheduledTask = async (date = new Date()) => {
 
             // Go to the changelog page
             console.log('Going to the changelog page...');
-            await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=250', { waitUntil: 'networkidle2' });
+            await navigateWithRetry(page, 'https://www.realgpl.com/changelog/?99936_results_per_page=250');
                 console.log(date)
             console.log('Changelog page...');
 
@@ -670,7 +665,7 @@ const scheduledTask = async (date = new Date()) => {
                     // Only navigate to changelog page if we're not already there
                     if (!isOnChangelogPage) {
                         console.log(`Navigating to changelog page to find download buttons...`);
-                        await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=250', { waitUntil: 'networkidle2' });
+                        await navigateWithRetry(page, 'https://www.realgpl.com/changelog/?99936_results_per_page=250');
                         isOnChangelogPage = true;
                     } else {
                         console.log(`Already on changelog page, looking for download buttons...`);
@@ -719,7 +714,7 @@ const scheduledTask = async (date = new Date()) => {
                         // Try alternate method - direct navigation
                         if (downloadSuccess?.href) {
                             console.log(`Trying direct navigation to: ${downloadSuccess.href}`);
-                            await page.goto(downloadSuccess.href, { waitUntil: 'networkidle2' });
+                            await navigateWithRetry(page, downloadSuccess.href);
                             isOnChangelogPage = false; // We're no longer on the changelog page
                         } else {
                             throw new Error('Download button not found and no href available');
@@ -1136,24 +1131,12 @@ const downloadAllFiles = async (date = new Date()) => {
         const isDevelopment = process.env.NODE_ENV === 'development';
         console.log(`Running in ${isDevelopment ? 'DEVELOPMENT' : 'PRODUCTION'} mode`);
         
-        // Launch Puppeteer browser
-        console.log('Launching Puppeteer browser...');
-        const browser = await puppeteer.launch({
-            headless: true,
-            args: ['--no-sandbox', '--disable-setuid-sandbox'],
-            defaultViewport: null,
-            // Explicitly set download preferences to prevent using system Downloads folder
-            userDataDir: path.join(process.cwd(), 'temp_user_data')
-        });
+        // Launch Puppeteer browser with Cloudflare bypass
+        console.log('Launching Puppeteer browser with Cloudflare bypass...');
+        const { browser, page } = await createCloudflareBypassBrowser();
         
-        // Create a new page
-        const page = await browser.newPage();
-        page.setDefaultTimeout(0);
-
-        // Set random user agent
-        const userAgent = getRandomUserAgent();
-        console.log(`Using user agent: ${userAgent}`);
-        await page.setUserAgent(userAgent);
+        // Add human-like behavior
+        await addHumanLikeBehavior(page);
         
         // Set download behavior using CDP (Chrome DevTools Protocol)
         const client = await page.target().createCDPSession();
@@ -1187,7 +1170,7 @@ const downloadAllFiles = async (date = new Date()) => {
         try {
             // Go to the login page
             console.log('Going to the login page...');
-            await page.goto('https://www.realgpl.com/my-account/');
+            await navigateWithRetry(page, 'https://www.realgpl.com/my-account/');
             
             try {
                 // consent label
@@ -1215,7 +1198,7 @@ const downloadAllFiles = async (date = new Date()) => {
             
             // Go to the changelog page
             console.log('Going to the changelog page...');
-            await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=250', { waitUntil: 'networkidle2' });
+            await navigateWithRetry(page, 'https://www.realgpl.com/changelog/?99936_results_per_page=250');
             
             // Format the date for comparison
             var theDate = new Date(date).toLocaleDateString('en-US', {
@@ -1454,7 +1437,7 @@ const downloadAllFiles = async (date = new Date()) => {
                     
                     // Navigate directly to the product page instead of the changelog page
                     console.log(`Navigating directly to product page: ${row.productURL}`);
-                    await page.goto(row.productURL, { waitUntil: 'networkidle2' });
+                    await navigateWithRetry(page, row.productURL);
                     
                     // Use waitFor or waitForTimeout depending on which is available
                     // This ensures compatibility with different Puppeteer versions
@@ -1587,7 +1570,7 @@ const downloadAllFiles = async (date = new Date()) => {
                         if (directDownloadUrl) {
                             console.log(`Found direct download link: ${directDownloadUrl}`);
                             try {
-                                await page.goto(directDownloadUrl, { timeout: 30000 }).catch(e => {
+                                await navigateWithRetry(page, directDownloadUrl).catch(e => {
                                     console.log(`Navigation error (expected for downloads): ${e.message}`);
                                 });
                             } catch (dlErr) {
