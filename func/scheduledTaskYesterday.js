@@ -1,9 +1,10 @@
-const puppeteer = require('puppeteer');
 const { 
     createCloudflareBypassBrowser, 
     navigateWithRetry, 
     handleCloudflareChallenge, 
     addHumanLikeBehavior, 
+    getCookies,
+    closeBrowser,
     randomDelay 
 } = require('./cloudflareBypass');
 const JSONdb = require('simple-json-db');
@@ -844,8 +845,8 @@ const scheduledTask = async (date = new Date()) => {
 
             console.log('Downloaded files:', fileCounter);
             console.log('Errors:', errorCounter);
-            // Close the Puppeteer browser
-            await browser.close();
+            // Close the Browserless browser
+            await closeBrowser(browser);
 
             console.log('Browser closed.');
             try{
@@ -1827,8 +1828,8 @@ const downloadAllFiles = async (date = new Date()) => {
             console.log('Downloaded files:', fileCounter);
             console.log('Errors:', errorCounter);
             
-            // Close the Puppeteer browser
-            await browser.close();
+            // Close the Browserless browser
+            await closeBrowser(browser);
             console.log('Browser closed.');
             
             // Save results and errors to files
@@ -1943,7 +1944,7 @@ const downloadAllFiles = async (date = new Date()) => {
             };
         } finally {
             if (browser) {
-                await browser.close();
+                await closeBrowser(browser);
             }
         }
     } catch (outerError) {

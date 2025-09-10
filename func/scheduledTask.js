@@ -1,4 +1,12 @@
-const puppeteer = require('puppeteer');
+const { 
+    createCloudflareBypassBrowser, 
+    navigateWithRetry, 
+    handleCloudflareChallenge, 
+    addHumanLikeBehavior, 
+    getCookies,
+    closeBrowser,
+    randomDelay 
+} = require('./cloudflareBypass');
 const JSONdb = require('simple-json-db');
 const fs = require('fs');
 const path = require('path');
@@ -39,27 +47,24 @@ const scheduledTask = async () => {
     db.JSON({});
     let list = [];
     try {
-        // Launch Puppeteer browser
-        console.log('Launching Puppeteer browser...');
-        const browser = await puppeteer.launch({
-            headless: true,
-            executablePath: '/usr/bin/chromium', // Adjusted path for Chromium
-            defaultViewport: null,
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu', '--headless'],
-            userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.97 Safari/537.36'
-        });
+        // Launch Browserless browser with Cloudflare bypass
+        console.log('Launching Browserless browser with Cloudflare bypass...');
+        const { browser, page } = await createCloudflareBypassBrowser();
+        
+        // Add human-like behavior
+        await addHumanLikeBehavior(page);
+        
         if (!fs.existsSync('./public/downloads/')) {
             fs.mkdirSync('./public/downloads/', {recursive: true});
             touch('index.html');
         }
-        // Create a new page
-        const page = await browser.newPage();
+        
         page.setDefaultTimeout(0);
 
         try {
             // Go to the login page
             console.log('Going to the login page...');
-            await page.goto('https://www.realgpl.com/my-account/');
+            await navigateWithRetry(page, 'https://www.realgpl.com/my-account/');
 
             var username =  process.env.USERNAME;
             var password = process.env.PASSWORD;
@@ -79,7 +84,7 @@ const scheduledTask = async () => {
 
             // Go to the changelog page
             console.log('Going to the changelog page...');
-            await page.goto('https://www.realgpl.com/changelog/?99936_results_per_page=500');
+            await navigateWithRetry(page, 'https://www.realgpl.com/changelog/?99936_results_per_page=500');
 
             // Get the links of the changelog entrie
             const today = new Date().toLocaleDateString('en-US', {
@@ -178,8 +183,8 @@ const scheduledTask = async () => {
             for (let i = 0; i < data.length; i++) {
                 console.log(`Starting download for file ${i + 1} of ${data.length}...`);
                 try {
-                    // Get cookies from Puppeteer
-                    const cookies = await page.cookies();
+                    // Get cookies from Browserless
+                    const cookies = await getCookies(page);
 
                     // Format cookies for axios
                     const formattedCookies = cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
@@ -223,8 +228,8 @@ const scheduledTask = async () => {
             }
 
             console.log('Downloaded files:', fileCounter);
-            // Close the Puppeteer browser
-            await browser.close();
+            // Close the Browserless browser
+            await closeBrowser(browser);
             console.log('Browser closed.');
             db.JSON(list);
             db.sync();

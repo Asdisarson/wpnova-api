@@ -1,8 +1,12 @@
+// Load environment variables
+require('dotenv').config();
+
 const { 
     createCloudflareBypassBrowser, 
     navigateWithRetry, 
     handleCloudflareChallenge, 
     addHumanLikeBehavior, 
+    closeBrowser,
     randomDelay 
 } = require('./func/cloudflareBypass');
 
@@ -32,17 +36,29 @@ async function testCloudflareBypass() {
         const pageTitle = await page.title();
         console.log(`Page title: ${pageTitle}`);
         
-        // Check for Cloudflare challenge indicators
-        const isCloudflareChallenge = await page.evaluate(() => {
-            return document.title.includes('Just a moment') || 
-                   document.body.innerHTML.includes('Checking your browser') ||
-                   document.body.innerHTML.includes('cloudflare');
+        // Check if we got actual content (not blocked)
+        const hasActualContent = await page.evaluate(() => {
+            return document.body.innerText.length > 100 && 
+                   !document.body.innerText.includes('Just a moment') &&
+                   !document.body.innerText.includes('Checking your browser');
         });
         
-        if (isCloudflareChallenge) {
-            console.log('❌ Cloudflare challenge detected - bypass may need improvement');
+        // Check for Cloudflare challenge indicators (current state) - be more specific
+        const isCurrentlyBlocked = await page.evaluate(() => {
+            const title = document.title.toLowerCase();
+            const bodyText = document.body.innerText.toLowerCase();
+            return title.includes('just a moment') || 
+                   bodyText.includes('checking your browser') ||
+                   bodyText.includes('please wait while we check your browser') ||
+                   bodyText.includes('one moment please');
+        });
+        
+        if (isCurrentlyBlocked) {
+            console.log('❌ Cloudflare challenge still active - bypass may need improvement');
+        } else if (hasActualContent) {
+            console.log('✅ Successfully bypassed Cloudflare protection and loaded actual content');
         } else {
-            console.log('✅ Successfully bypassed Cloudflare protection');
+            console.log('⚠️  Page loaded but content may be limited');
         }
         
         // Get some page content to verify it's working
@@ -53,7 +69,7 @@ async function testCloudflareBypass() {
         console.error('Test failed:', error.message);
     } finally {
         if (browser) {
-            await browser.close();
+            await closeBrowser(browser);
         }
     }
 }
