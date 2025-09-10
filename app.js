@@ -6,8 +6,7 @@ var cookieParser = require('cookie-parser');
 var logger = require('morgan');
 const fs = require('fs');
 const dbJson = require('simple-json-db')
-const scheduledTask = require('./func/scheduledTask');
-const { downloadAllFiles } = require('./func/scheduledTaskYesterday'); // Import the optimized function
+const downloadFromChangelog = require('./func/changelogDownloader'); // Use the new unified changelog downloader
 var date = new Date();
 var app = express();
 app.use(logger('dev'));
@@ -35,34 +34,39 @@ app.use('/refresh', async(req,res) => {
     if(req.query.date){
         date = new Date(req.query.date);
     }
-    console.log(date);
+    console.log(`Refreshing changelog for date: ${date.toLocaleDateString()}`);
     
-    // Use the optimized downloadAllFiles function for better performance
-    // Pass the date parameter to filter by specific date
-    downloadAllFiles(date).then(result => {
+    try {
+        // Use the new unified changelog downloader
+        const result = await downloadFromChangelog({
+            date: date,
+            resultsPerPage: 500,
+            downloadFiles: true
+        });
+        
         executeAfterAnHour();
         return res.status(200).json({
-            message: 'Downloadable Files',
+            message: 'Downloadable Files from Changelog',
             date: date.toLocaleDateString('en-US', {
                 year: 'numeric',
                 month: 'long',
                 day: 'numeric',
             }),
-            files: result.successList ? result.successList.length : 0,
+            files: result.products.length,
             downloaded: result.downloadedCount,
-            skipped: result.skippedCount
+            errors: result.errorCount
         });
-    }).catch(error => {
+    } catch (error) {
         console.error('Error in download process:', error);
         executeAfterAnHour();
         return res.status(503).json({
             message: 'Something is Wrong',
             error: error.message
         });
-    });
+    }
 });
 
-// New endpoint to download all files from changelog
+// Download all files from changelog
 app.use('/download-all', async(req,res) => {
     var date = new Date();
     if(req.query.date){
@@ -71,7 +75,12 @@ app.use('/download-all', async(req,res) => {
     console.log(`Starting download of all files from changelog for date: ${date.toLocaleDateString()}`);
     
     try {
-        const result = await downloadAllFiles(date);
+        const result = await downloadFromChangelog({
+            date: date,
+            resultsPerPage: 500,
+            downloadFiles: true
+        });
+        
         executeAfterAnHour();
         return res.status(200).json({
             message: 'Downloaded all files from changelog',
@@ -81,8 +90,8 @@ app.use('/download-all', async(req,res) => {
                 day: 'numeric',
             }),
             downloaded: result.downloadedCount,
-            skipped: result.skippedCount,
-            files: result.successList ? result.successList.length : 0
+            errors: result.errorCount,
+            files: result.products.length
         });
     } catch (error) {
         console.error('Error downloading all files:', error);
@@ -93,8 +102,10 @@ app.use('/download-all', async(req,res) => {
         });
     }
 });
+
 app.use('/lastUpdate', async(req,res) => {
         var db = new dbJson('./files.json');
         return res.send(db.JSON());
 });
+
 module.exports = app;
