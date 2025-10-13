@@ -316,16 +316,25 @@ const navigateWithRetry = async (page, url, maxRetries = 3) => {
             await new Promise(resolve => setTimeout(resolve, randomDelay(1000, 3000)));
             
             const response = await page.goto(url, { 
-                waitUntil: 'networkidle2',
-                timeout: 30000 
+                waitUntil: ['load', 'domcontentloaded', 'networkidle0'],
+                timeout: 60000 
             });
             
             // Handle Cloudflare challenge
             await handleCloudflareChallenge(page);
             
+            // Additional wait to ensure page is fully loaded and JavaScript has executed
+            console.log('Waiting for page to fully load...');
+            await page.waitForFunction(() => {
+                return document.readyState === 'complete';
+            }, { timeout: 10000 }).catch(() => {});
+            
+            // Additional delay for any dynamic content
+            await new Promise(resolve => setTimeout(resolve, randomDelay(2000, 4000)));
+            
             // Check if we got a successful response
             if (response && response.status() < 400) {
-                console.log(`Successfully navigated to ${url}`);
+                console.log(`Successfully navigated to ${url} and page is fully loaded`);
                 return response;
             } else {
                 throw new Error(`HTTP ${response ? response.status() : 'unknown'} error`);
@@ -341,6 +350,45 @@ const navigateWithRetry = async (page, url, maxRetries = 3) => {
             // Wait before retry
             await new Promise(resolve => setTimeout(resolve, randomDelay(2000, 5000)));
         }
+    }
+};
+
+// Function to wait for element to be ready before interaction
+const waitForElementReady = async (page, selector, timeout = 30000) => {
+    try {
+        console.log(`Waiting for element: ${selector}`);
+        
+        // Wait for element to exist in DOM
+        await page.waitForSelector(selector, { 
+            visible: true,
+            timeout: timeout 
+        });
+        
+        // Additional wait to ensure element is interactive
+        await page.waitForFunction(
+            (sel) => {
+                const element = document.querySelector(sel);
+                if (!element) return false;
+                
+                // Check if element is visible and not disabled
+                const style = window.getComputedStyle(element);
+                return style.display !== 'none' && 
+                       style.visibility !== 'hidden' && 
+                       style.opacity !== '0' &&
+                       !element.disabled;
+            },
+            { timeout: 10000 },
+            selector
+        ).catch(() => {});
+        
+        // Small delay for stability
+        await new Promise(resolve => setTimeout(resolve, randomDelay(500, 1000)));
+        
+        console.log(`Element ${selector} is ready for interaction`);
+        return true;
+    } catch (error) {
+        console.log(`Element ${selector} not found or not ready: ${error.message}`);
+        return false;
     }
 };
 
@@ -394,6 +442,7 @@ module.exports = {
     navigateWithRetry,
     handleCloudflareChallenge,
     addHumanLikeBehavior,
+    waitForElementReady,
     getCookies,
     closeBrowser,
     randomDelay,

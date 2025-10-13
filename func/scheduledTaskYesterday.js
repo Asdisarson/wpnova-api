@@ -3,6 +3,7 @@ const {
     navigateWithRetry, 
     handleCloudflareChallenge, 
     addHumanLikeBehavior, 
+    waitForElementReady,
     getCookies,
     closeBrowser,
     randomDelay 
@@ -402,35 +403,51 @@ const scheduledTask = async (date = new Date()) => {
             await navigateWithRetry(page, 'https://www.realgpl.com/my-account/');
 
             try {
-                //consent label
-                await Promise.all([
-                    page.click('.fc-button-label'),
-                ]);
+                // Wait for consent block to be ready before clicking
+                const consentExists = await waitForElementReady(page, '.fc-button-label', 5000);
+                if (consentExists) {
+                    await page.click('.fc-button-label');
+                    await delay(1000);
+                    console.log('Consent block accepted');
+                }
             } catch (error) {
                 console.log('No Consent block')
             }
 
             var username =  process.env.USERNAME;
             var password = process.env.PASSWORD;
+            
+            // Wait for login form to be ready
+            await waitForElementReady(page, '#username');
+            await waitForElementReady(page, '#password');
+            
             // Fill in the login credentials
             console.log('Typing username...');
-
             await page.type('#username',username.toString());
 
             console.log('Typing password...');
             await page.type('#password',password.toString());
 
+            // Wait for login button to be ready before clicking
+            await waitForElementReady(page, '.button.woocommerce-button.woocommerce-form-login__submit');
+            
             console.log('Clicking the login button...');
-               await Promise.all([
-                   page.waitForNavigation(),
-                   page.click('.button.woocommerce-button.woocommerce-form-login__submit'),
-               ]);
+            await Promise.all([
+                page.waitForNavigation({ waitUntil: ['load', 'domcontentloaded', 'networkidle0'], timeout: 60000 }),
+                page.click('.button.woocommerce-button.woocommerce-form-login__submit'),
+            ]);
+            
+            // Additional wait to ensure login is complete
+            await delay(randomDelay(2000, 4000));
 
             // Go to the changelog page
             console.log('Going to the changelog page...');
             await navigateWithRetry(page, 'https://www.realgpl.com/changelog/?99936_results_per_page=250');
                 console.log(date)
             console.log('Changelog page...');
+            
+            // Wait for changelog table to be fully loaded
+            await waitForElementReady(page, 'tr.awcpt-row', 30000);
 
             // Flag to track if we're on the changelog page
             let isOnChangelogPage = true;
@@ -1174,16 +1191,24 @@ const downloadAllFiles = async (date = new Date()) => {
             await navigateWithRetry(page, 'https://www.realgpl.com/my-account/');
             
             try {
-                // consent label
-                await Promise.all([
-                    page.click('.fc-button-label'),
-                ]);
+                // Wait for consent block to be ready before clicking
+                const consentExists = await waitForElementReady(page, '.fc-button-label', 5000);
+                if (consentExists) {
+                    await page.click('.fc-button-label');
+                    await delay(1000);
+                    console.log('Consent block accepted');
+                }
             } catch (error) {
                 console.log('No Consent block')
             }
             
             var username = process.env.USERNAME;
             var password = process.env.PASSWORD;
+            
+            // Wait for login form to be ready
+            await waitForElementReady(page, '#username');
+            await waitForElementReady(page, '#password');
+            
             // Fill in the login credentials
             console.log('Typing username...');
             await page.type('#username', username.toString());
@@ -1191,15 +1216,24 @@ const downloadAllFiles = async (date = new Date()) => {
             console.log('Typing password...');
             await page.type('#password', password.toString());
             
+            // Wait for login button to be ready before clicking
+            await waitForElementReady(page, '.button.woocommerce-button.woocommerce-form-login__submit');
+            
             console.log('Clicking the login button...');
             await Promise.all([
-                page.waitForNavigation(),
+                page.waitForNavigation({ waitUntil: ['load', 'domcontentloaded', 'networkidle0'], timeout: 60000 }),
                 page.click('.button.woocommerce-button.woocommerce-form-login__submit'),
             ]);
+            
+            // Additional wait to ensure login is complete
+            await delay(randomDelay(2000, 4000));
             
             // Go to the changelog page
             console.log('Going to the changelog page...');
             await navigateWithRetry(page, 'https://www.realgpl.com/changelog/?99936_results_per_page=250');
+            
+            // Wait for changelog table to be fully loaded
+            await waitForElementReady(page, 'tr.awcpt-row', 30000);
             
             // Format the date for comparison
             var theDate = new Date(date).toLocaleDateString('en-US', {

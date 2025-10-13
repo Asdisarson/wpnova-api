@@ -4,7 +4,8 @@ const {
     createCloudflareBypassBrowser, 
     navigateWithRetry, 
     handleCloudflareChallenge, 
-    addHumanLikeBehavior, 
+    addHumanLikeBehavior,
+    waitForElementReady,
     getCookies,
     closeBrowser,
     randomDelay 
@@ -17,6 +18,9 @@ const stream = require('stream');
 const {promisify} = require('util');
 const pipeline = promisify(stream.pipeline);
 const convertJsonToCsv = require('./convertJsonToCsv');
+
+// Add a universal delay function
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 // Ensure directory exists
 const ensureDirectoryExistence = (filePath) => {
@@ -142,6 +146,18 @@ async function downloadFromChangelog(options = {}) {
         console.log('🔐 Logging in to RealGPL...');
         await navigateWithRetry(page, 'https://www.realgpl.com/my-account/');
         
+        try {
+            // Wait for consent block to be ready before clicking
+            const consentExists = await waitForElementReady(page, '.fc-button-label', 5000);
+            if (consentExists) {
+                await page.click('.fc-button-label');
+                await delay(1000);
+                console.log('Consent block accepted');
+            }
+        } catch (error) {
+            console.log('No Consent block')
+        }
+        
         const username = process.env.USERNAME;
         const password = process.env.PASSWORD;
         
@@ -149,11 +165,18 @@ async function downloadFromChangelog(options = {}) {
             throw new Error('USERNAME and PASSWORD environment variables are required');
         }
         
+        // Wait for login form to be fully loaded
+        await waitForElementReady(page, '#username');
+        await waitForElementReady(page, '#password');
+        
         console.log('Entering credentials...');
         await page.type('#username', username.toString());
-        await randomDelay(500, 1000);
+        await delay(randomDelay(500, 1000));
         await page.type('#password', password.toString());
-        await randomDelay(500, 1000);
+        await delay(randomDelay(500, 1000));
+        
+        // Wait for login button to be ready
+        await waitForElementReady(page, '.button.woocommerce-button.woocommerce-form-login__submit');
         
         console.log('Submitting login form...');
         
@@ -207,22 +230,29 @@ async function downloadFromChangelog(options = {}) {
         console.log(`📋 Navigating to changelog: ${changelogUrl}`);
         await navigateWithRetry(page, changelogUrl);
         
-        // Wait for table to load
-        await page.waitForSelector('table#awcpt-product-table-99936', { timeout: 30000 });
-        console.log('⏳ Table element found, waiting for data to load...');
+        // Wait for table to be fully loaded and interactive
+        console.log('⏳ Waiting for changelog table to load...');
+        const tableExists = await waitForElementReady(page, 'table#awcpt-product-table-99936', 30000);
+        
+        if (!tableExists) {
+            throw new Error('Changelog table did not load');
+        }
+        
+        console.log('⏳ Table element found, waiting for data rows to load...');
         
         // IMPORTANT: Wait for table rows to be populated (AJAX/JS loaded content)
         // The table exists but rows are loaded dynamically via JavaScript
+        let rowsLoaded = false;
         try {
-            await page.waitForSelector('table#awcpt-product-table-99936 tbody tr.awcpt-row', { 
-                timeout: 60000 
-            });
+            rowsLoaded = await waitForElementReady(page, 'table#awcpt-product-table-99936 tbody tr.awcpt-row', 60000);
         } catch (error) {
             // Fallback: Try alternate selectors if tbody structure is different
             console.log('⚠️  Standard row selector failed, trying alternate selector...');
-            await page.waitForSelector('table#awcpt-product-table-99936 tr.awcpt-row', { 
-                timeout: 30000 
-            });
+            rowsLoaded = await waitForElementReady(page, 'table#awcpt-product-table-99936 tr.awcpt-row', 30000);
+        }
+        
+        if (!rowsLoaded) {
+            throw new Error('Changelog table rows did not load');
         }
         
         // Extra wait to ensure all dynamic content is loaded
