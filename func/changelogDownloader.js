@@ -448,16 +448,46 @@ async function downloadFromChangelog(options = {}) {
                             // Use navigateWithRetry to ensure page fully loads and session is maintained
                             await navigateWithRetry(page, data[i].productURL);
                             
-                            // Verify we're still logged in by checking for logout link or account elements
-                            const isLoggedIn = await page.evaluate(() => {
-                                const hasLogoutLink = document.querySelector('a[href*="customer-logout"]') !== null;
-                                const hasMyAccount = document.querySelector('.woocommerce-MyAccount-navigation') !== null;
-                                const hasAccountMenu = document.querySelector('.account-menu, .my-account-menu') !== null;
-                                return hasLogoutLink || hasMyAccount || hasAccountMenu;
+                            // Verify we're still logged in by checking login indicators
+                            const loginStatus = await page.evaluate(() => {
+                                // Check if login form is present (indicates NOT logged in)
+                                const hasLoginForm = document.querySelector('form.login, form.woocommerce-form-login, #username') !== null;
+                                
+                                // Check for logged-in indicators
+                                const hasLogoutLink = document.querySelector('a[href*="customer-logout"], a[href*="wp-login.php?action=logout"]') !== null;
+                                const hasMyAccountLink = document.querySelector('a[href*="/my-account/"]') !== null;
+                                const hasAccountMenu = document.querySelector('.account-menu, .my-account-menu, .user-menu') !== null;
+                                
+                                // Check for download buttons (which only appear when logged in)
+                                const hasDownloadButtons = document.querySelector('.yith-wcmbs-download-button, a[href*="download"]') !== null;
+                                
+                                // If login form is present AND no logout link, we're definitely not logged in
+                                if (hasLoginForm && !hasLogoutLink) {
+                                    return { isLoggedIn: false, reason: 'Login form present' };
+                                }
+                                
+                                // If we have any logged-in indicators, we're logged in
+                                if (hasLogoutLink || hasMyAccountLink || hasAccountMenu || hasDownloadButtons) {
+                                    return { isLoggedIn: true, reason: 'Found logged-in indicators' };
+                                }
+                                
+                                // Default to logged in (benefit of the doubt on product pages)
+                                return { isLoggedIn: true, reason: 'No clear indicators, assuming logged in' };
                             });
                             
-                            if (!isLoggedIn) {
+                            console.log(`Session check: ${loginStatus.isLoggedIn ? '✅' : '⚠️'} ${loginStatus.reason}`);
+                            
+                            if (!loginStatus.isLoggedIn) {
+                                // Get detailed page info for debugging
+                                const pageInfo = await page.evaluate(() => {
+                                    return {
+                                        title: document.title,
+                                        url: window.location.href,
+                                        bodyText: document.body.innerText.substring(0, 500)
+                                    };
+                                });
                                 console.log('⚠️  Session lost, user not logged in on product page');
+                                console.log('Page info:', pageInfo);
                                 throw new Error('Login session expired - please re-login');
                             }
                             

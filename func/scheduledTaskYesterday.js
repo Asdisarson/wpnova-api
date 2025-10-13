@@ -432,10 +432,51 @@ const scheduledTask = async (date = new Date()) => {
             await waitForElementReady(page, '.button.woocommerce-button.woocommerce-form-login__submit');
             
             console.log('Clicking the login button...');
-            await Promise.all([
-                page.waitForNavigation({ waitUntil: ['load', 'domcontentloaded', 'networkidle0'], timeout: 60000 }),
-                page.click('.button.woocommerce-button.woocommerce-form-login__submit'),
-            ]);
+            
+            // Click the login button and wait for either navigation or DOM changes
+            await page.click('.button.woocommerce-button.woocommerce-form-login__submit');
+            
+            // Wait for login success indicators with a race condition
+            try {
+                await Promise.race([
+                    // Option 1: Wait for navigation
+                    page.waitForNavigation({ timeout: 60000, waitUntil: ['load', 'domcontentloaded'] }),
+                    // Option 2: Wait for account navigation menu to appear (indicates successful login)
+                    page.waitForSelector('.woocommerce-MyAccount-navigation', { timeout: 60000 }),
+                    // Option 3: Wait for account content
+                    page.waitForSelector('.woocommerce-account', { timeout: 60000 })
+                ]);
+                console.log('✅ Successfully logged in');
+            } catch (error) {
+                // Final verification: check if we're logged in by examining the page
+                console.log('⚠️  Login wait timed out, performing final verification...');
+                await delay(randomDelay(2000, 3000)); // Give page time to settle
+                
+                const loginStatus = await page.evaluate(() => {
+                    const hasAccountNav = document.querySelector('.woocommerce-MyAccount-navigation') !== null;
+                    const hasAccountContent = document.querySelector('.woocommerce-account') !== null;
+                    const noLoginForm = document.querySelector('#username') === null;
+                    const hasLogoutLink = document.querySelector('a[href*="customer-logout"]') !== null;
+                    const currentUrl = window.location.href;
+                    
+                    return {
+                        hasAccountNav,
+                        hasAccountContent,
+                        noLoginForm,
+                        hasLogoutLink,
+                        currentUrl,
+                        isLoggedIn: hasAccountNav || hasAccountContent || (noLoginForm && hasLogoutLink)
+                    };
+                });
+                
+                console.log('Login status check:', loginStatus);
+                
+                if (!loginStatus.isLoggedIn) {
+                    throw new Error(`Login verification failed: ${error.message}`);
+                }
+                
+                console.log('✅ Login verified successfully (URL: ' + loginStatus.currentUrl + ')');
+            }
             
             // Additional wait to ensure login is complete
             await delay(randomDelay(2000, 4000));
@@ -1220,10 +1261,51 @@ const downloadAllFiles = async (date = new Date()) => {
             await waitForElementReady(page, '.button.woocommerce-button.woocommerce-form-login__submit');
             
             console.log('Clicking the login button...');
-            await Promise.all([
-                page.waitForNavigation({ waitUntil: ['load', 'domcontentloaded', 'networkidle0'], timeout: 60000 }),
-                page.click('.button.woocommerce-button.woocommerce-form-login__submit'),
-            ]);
+            
+            // Click the login button and wait for either navigation or DOM changes
+            await page.click('.button.woocommerce-button.woocommerce-form-login__submit');
+            
+            // Wait for login success indicators with a race condition
+            try {
+                await Promise.race([
+                    // Option 1: Wait for navigation
+                    page.waitForNavigation({ timeout: 60000, waitUntil: ['load', 'domcontentloaded'] }),
+                    // Option 2: Wait for account navigation menu to appear (indicates successful login)
+                    page.waitForSelector('.woocommerce-MyAccount-navigation', { timeout: 60000 }),
+                    // Option 3: Wait for account content
+                    page.waitForSelector('.woocommerce-account', { timeout: 60000 })
+                ]);
+                console.log('✅ Successfully logged in');
+            } catch (error) {
+                // Final verification: check if we're logged in by examining the page
+                console.log('⚠️  Login wait timed out, performing final verification...');
+                await delay(randomDelay(2000, 3000)); // Give page time to settle
+                
+                const loginStatus = await page.evaluate(() => {
+                    const hasAccountNav = document.querySelector('.woocommerce-MyAccount-navigation') !== null;
+                    const hasAccountContent = document.querySelector('.woocommerce-account') !== null;
+                    const noLoginForm = document.querySelector('#username') === null;
+                    const hasLogoutLink = document.querySelector('a[href*="customer-logout"]') !== null;
+                    const currentUrl = window.location.href;
+                    
+                    return {
+                        hasAccountNav,
+                        hasAccountContent,
+                        noLoginForm,
+                        hasLogoutLink,
+                        currentUrl,
+                        isLoggedIn: hasAccountNav || hasAccountContent || (noLoginForm && hasLogoutLink)
+                    };
+                });
+                
+                console.log('Login status check:', loginStatus);
+                
+                if (!loginStatus.isLoggedIn) {
+                    throw new Error(`Login verification failed: ${error.message}`);
+                }
+                
+                console.log('✅ Login verified successfully (URL: ' + loginStatus.currentUrl + ')');
+            }
             
             // Additional wait to ensure login is complete
             await delay(randomDelay(2000, 4000));
