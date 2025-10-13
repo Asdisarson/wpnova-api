@@ -225,6 +225,10 @@ async function downloadFromChangelog(options = {}) {
             console.log('✅ Login verified successfully (URL: ' + loginStatus.currentUrl + ')');
         }
         
+        // Save cookies after successful login to maintain session
+        const loginCookies = await page.cookies();
+        console.log(`💾 Saved ${loginCookies.length} session cookies`);
+        
         // Navigate to changelog page
         const changelogUrl = `https://www.realgpl.com/changelog/?99936_results_per_page=${resultsPerPage}`;
         console.log(`📋 Navigating to changelog: ${changelogUrl}`);
@@ -444,6 +448,10 @@ async function downloadFromChangelog(options = {}) {
                         // Try to navigate to the product page and find download link
                         if (data[i].productURL) {
                             console.log(`🔍 No direct download link, checking product page: ${data[i].productURL}`);
+                            
+                            // Restore session cookies before navigating to product page
+                            console.log('🔄 Restoring session cookies...');
+                            await page.setCookie(...loginCookies);
                             
                             // Use navigateWithRetry to ensure page fully loads and session is maintained
                             await navigateWithRetry(page, data[i].productURL);
