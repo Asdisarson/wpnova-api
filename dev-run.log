@@ -1,0 +1,150 @@
+Testing single product download with session verification...
+
+🔍 Checking website availability...
+✅ Website is reachable (Status: 200)
+🚀 Attempting with regular Puppeteer browser (no Browserless)...
+Using user agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/133.0
+Using viewport: 2560x1440
+Failed to create regular browser: Browser was not found at the configured executablePath (/usr/bin/google-chrome-stable)
+❌ Regular browser failed: Browser was not found at the configured executablePath (/usr/bin/google-chrome-stable)
+🔄 Falling back to Browserless with Cloudflare bypass...
+Using user agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15
+Using viewport: 1600x900
+Attempting to get Browserless WebSocket endpoint (1/5)...
+✅ Successfully obtained Browserless WebSocket endpoint
+Connecting to Browserless WebSocket endpoint...
+📊 Using: Browserless
+🔐 Logging in to RealGPL...
+Navigation attempt 1 to: https://www.realgpl.com/my-account/
+Cloudflare challenge detected, waiting for it to complete...
+Cloudflare challenge completed
+Waiting for page to fully load...
+Successfully navigated to https://www.realgpl.com/my-account/ and page is fully loaded
+Waiting for element: .fc-button-label
+Element .fc-button-label not found or not ready: Waiting for selector `.fc-button-label` failed: Waiting failed: 5000ms exceeded
+Waiting for element: #username
+Element #username is ready for interaction
+Waiting for element: #password
+Element #password is ready for interaction
+Entering credentials...
+Waiting for element: .button.woocommerce-button.woocommerce-form-login__submit
+Element .button.woocommerce-button.woocommerce-form-login__submit is ready for interaction
+Submitting login form...
+✅ Successfully logged in
+💾 Saved 13 session cookies
+📋 Navigating to changelog: https://www.realgpl.com/changelog/?99936_results_per_page=10
+Navigation attempt 1 to: https://www.realgpl.com/changelog/?99936_results_per_page=10
+Cloudflare challenge detected, waiting for it to complete...
+Cloudflare challenge completed
+Waiting for page to fully load...
+Successfully navigated to https://www.realgpl.com/changelog/?99936_results_per_page=10 and page is fully loaded
+⏳ Waiting for changelog table to load...
+Waiting for element: table#awcpt-product-table-99936
+Element table#awcpt-product-table-99936 is ready for interaction
+⏳ Table element found, waiting for data rows to load...
+Waiting for element: table#awcpt-product-table-99936 tbody tr.awcpt-row
+Element table#awcpt-product-table-99936 tbody tr.awcpt-row is ready for interaction
+✅ Changelog table data loaded with 10 total rows
+📅 Filtering products for date: October 13, 2025
+📊 Found 9 products in changelog
+⚠️  9 products missing download links. Investigating HTML structure...
+📋 Sample row structure: {
+  "outerHTML": "<tr class=\"awcpt-row\" data-id=\"40935\" data-cart-in=\"0\"><td class=\"awcpt-table-col awcpt-slNo-col\" style=\"\" data-id=\"40935\"><div class=\"awcpt-slno\">1</div></td><td class=\"awcpt-table-col awcpt-prdTitle-col\" style=\"\" data-id=\"40935\"><a class=\"awcpt-title\" href=\"https://www.realgpl.com/product/eventeo-event-conference-wordpress-theme-gpl/\" target=\"_blank\" title=\"Eventeo Theme GPL v2.8.4 – Event &amp; Conference WordPress Theme\">Eventeo Theme GPL v2.8.4 – Event &amp; Conference WordPress Theme</a></td><td class=\"awcpt-table-col awcpt-prdDate-col\" style=\"\" data-id=\"40935\"><span class=\"awcpt-date\">October 14, 2025</span></td><td class=\"awcpt-table-col awcpt-eleShortcode-col\" style=\"\" data-id=\"40935\"><div class=\"awcpt-shortcode-wrap\"></div></td></tr>",
+  "classList": [
+    "awcpt-row"
+  ],
+  "allLinks": [
+    {
+      "href": "https://www.realgpl.com/product/eventeo-event-conference-wordpress-theme-gpl/",
+      "text": "Eventeo Theme GPL v2.8.4 – Event & Conference WordPress Theme",
+      "classes": [
+        "awcpt-title"
+      ]
+    }
+  ]
+}
+
+📦 Products to process:
+1. WPBakery GPL v8.7- Page Builder Plugin For WordPress ❌
+2. AutomatorWP LearnDash Addon GPL v1.2.6 ❌
+3. Shopkeeper Theme GPL v7.9.6 - Multi-Purpose WooCommerce Theme ❌
+4. WPC AJAX Search for WooCommerce Premium GPL v2.4.8 ❌
+5. CommandUI Plugin GPL v1.10.0 ❌
+6. Gravity Forms reCAPTCHA Addon GPL v2.0.2 ❌
+7. AutomatorWP Pro GPL v4.7.4 ❌
+8. Admin and Site Enhancements Pro GPL v8.0.2 | ASE Pro ❌
+9. WPMU DEV Branda Pro Plugin GPL v3.4.26 ❌
+
+⬇️  Starting downloads...
+Failed to get cookies: ProtocolError: Network.getCookies timed out. Increase the 'protocolTimeout' setting in launch/connect calls for a higher timeout if needed.
+    at <instance_members_initializer> (/Users/cy/Developer/wpnova-api/node_modules/puppeteer-core/lib/cjs/puppeteer/common/CallbackRegistry.js:93:14)
+    at new Callback (/Users/cy/Developer/wpnova-api/node_modules/puppeteer-core/lib/cjs/puppeteer/common/CallbackRegistry.js:97:16)
+    at CallbackRegistry.create (/Users/cy/Developer/wpnova-api/node_modules/puppeteer-core/lib/cjs/puppeteer/common/CallbackRegistry.js:22:26)
+    at Connection._rawSend (/Users/cy/Developer/wpnova-api/node_modules/puppeteer-core/lib/cjs/puppeteer/cdp/Connection.js:89:26)
+    at CdpCDPSession.send (/Users/cy/Developer/wpnova-api/node_modules/puppeteer-core/lib/cjs/puppeteer/cdp/CDPSession.js:66:33)
+    at CdpPage.cookies (/Users/cy/Developer/wpnova-api/node_modules/puppeteer-core/lib/cjs/puppeteer/cdp/Page.js:472:66)
+    at getCookies (/Users/cy/Developer/wpnova-api/func/cloudflareBypass.js:423:27)
+    at downloadFromChangelog (/Users/cy/Developer/wpnova-api/func/changelogDownloader.js:436:35)
+
+📥 Downloading file 1 of 9...
+Product: WPBakery GPL v8.7- Page Builder Plugin For WordPress
+🔍 No direct download link, checking product page: https://www.realgpl.com/product/wpbakery-page-builder-gpl/
+🔄 Restoring session cookies...
+❌ Failed to download: Network.deleteCookies timed out. Increase the 'protocolTimeout' setting in launch/connect calls for a higher timeout if needed.
+
+📥 Downloading file 2 of 9...
+Product: AutomatorWP LearnDash Addon GPL v1.2.6
+🔍 No direct download link, checking product page: https://www.realgpl.com/product/automatorwp-learndash-addon-gpl/
+🔄 Restoring session cookies...
+❌ Failed to download: Network.deleteCookies timed out. Increase the 'protocolTimeout' setting in launch/connect calls for a higher timeout if needed.
+
+📥 Downloading file 3 of 9...
+Product: Shopkeeper Theme GPL v7.9.6 - Multi-Purpose WooCommerce Theme
+🔍 No direct download link, checking product page: https://www.realgpl.com/product/shopkeeper-theme-gpl/
+🔄 Restoring session cookies...
+❌ Failed to download: Network.deleteCookies timed out. Increase the 'protocolTimeout' setting in launch/connect calls for a higher timeout if needed.
+
+📥 Downloading file 4 of 9...
+Product: WPC AJAX Search for WooCommerce Premium GPL v2.4.8
+🔍 No direct download link, checking product page: https://www.realgpl.com/product/wpc-ajax-search-for-woocommerce-premium-gpl/
+🔄 Restoring session cookies...
+❌ Failed to download: Protocol error (Network.deleteCookies): Target closed
+
+📥 Downloading file 5 of 9...
+Product: CommandUI Plugin GPL v1.10.0
+🔍 No direct download link, checking product page: https://www.realgpl.com/product/commandui-plugin-gpl/
+🔄 Restoring session cookies...
+❌ Failed to download: Protocol error (Network.deleteCookies): Session closed. Most likely the page has been closed.
+
+📥 Downloading file 6 of 9...
+Product: Gravity Forms reCAPTCHA Addon GPL v2.0.2
+🔍 No direct download link, checking product page: https://www.realgpl.com/product/gravity-forms-recaptcha-addon-gpl/
+🔄 Restoring session cookies...
+❌ Failed to download: Protocol error (Network.deleteCookies): Session closed. Most likely the page has been closed.
+
+📥 Downloading file 7 of 9...
+Product: AutomatorWP Pro GPL v4.7.4
+🔍 No direct download link, checking product page: https://www.realgpl.com/product/automatorwp-pro-gpl/
+🔄 Restoring session cookies...
+❌ Failed to download: Protocol error (Network.deleteCookies): Session closed. Most likely the page has been closed.
+
+📥 Downloading file 8 of 9...
+Product: Admin and Site Enhancements Pro GPL v8.0.2 | ASE Pro
+🔍 No direct download link, checking product page: https://www.realgpl.com/product/admin-and-site-enhancements-pro-gpl/
+🔄 Restoring session cookies...
+❌ Failed to download: Protocol error (Network.deleteCookies): Session closed. Most likely the page has been closed.
+
+📥 Downloading file 9 of 9...
+Product: WPMU DEV Branda Pro Plugin GPL v3.4.26
+🔍 No direct download link, checking product page: https://www.realgpl.com/product/download-wpmu-dev-branda-pro-plugin-gpl/
+🔄 Restoring session cookies...
+❌ Failed to download: Protocol error (Network.deleteCookies): Session closed. Most likely the page has been closed.
+
+📊 Download Summary:
+✅ Successfully downloaded: 0 files
+❌ Failed downloads: 9 files
+🔒 Browser closed
+
+=== TEST COMPLETE ===
+Downloaded: 0 files
+Errors: 9

@@ -226,7 +226,8 @@ async function downloadFromChangelog(options = {}) {
         }
         
         // Save cookies after successful login to maintain session
-        const loginCookies = await page.cookies();
+        // Read cookies for the site origin explicitly
+        const loginCookies = await page.cookies('https://www.realgpl.com/');
         console.log(`💾 Saved ${loginCookies.length} session cookies`);
         
         // Navigate to changelog page
@@ -451,37 +452,52 @@ async function downloadFromChangelog(options = {}) {
                             
                             // Restore session cookies before navigating to product page
                             console.log('🔄 Restoring session cookies...');
-                            await page.setCookie(...loginCookies);
+                            try {
+                                // Filter cookies to only include those for the current domain
+                                const validCookies = loginCookies.filter(cookie =>
+                                    cookie.domain && cookie.domain.includes('realgpl.com')
+                                );
+
+                                if (validCookies.length > 0) {
+                                    console.log(`Setting ${validCookies.length} valid cookies`);
+                                    await page.setCookie(...validCookies);
+                                } else {
+                                    console.log('No valid cookies to restore');
+                                }
+                            } catch (cookieErr) {
+                                console.log(`Cookie restoration warning: ${cookieErr.message}`);
+                            }
                             
                             // Use navigateWithRetry to ensure page fully loads and session is maintained
                             await navigateWithRetry(page, data[i].productURL);
                             
-                            // Verify we're still logged in by checking login indicators
-                            const loginStatus = await page.evaluate(() => {
-                                // Check if login form is present (indicates NOT logged in)
+                            // Verify we're still logged in by checking cookies and DOM indicators
+                            const hasWpLoginCookie = (await page.cookies('https://www.realgpl.com/'))
+                                .some(c => c.name && c.name.startsWith('wordpress_logged_in'));
+                            
+                            const loginStatus = await page.evaluate((hasCookie) => {
+                                // Check if login form is present (might be a hidden popup too)
                                 const hasLoginForm = document.querySelector('form.login, form.woocommerce-form-login, #username') !== null;
                                 
                                 // Check for logged-in indicators
                                 const hasLogoutLink = document.querySelector('a[href*="customer-logout"], a[href*="wp-login.php?action=logout"]') !== null;
-                                const hasMyAccountLink = document.querySelector('a[href*="/my-account/"]') !== null;
                                 const hasAccountMenu = document.querySelector('.account-menu, .my-account-menu, .user-menu') !== null;
-                                
-                                // Check for download buttons (which only appear when logged in)
                                 const hasDownloadButtons = document.querySelector('.yith-wcmbs-download-button, a[href*="download"]') !== null;
                                 
-                                // If login form is present AND no logout link, we're definitely not logged in
+                                // Trust cookie most; DOM may include hidden login popups
+                                if (hasCookie) return { isLoggedIn: true, reason: 'WordPress cookie present' };
+                                
+                                // If login form is visibly present AND no logout link, treat as logged out
                                 if (hasLoginForm && !hasLogoutLink) {
                                     return { isLoggedIn: false, reason: 'Login form present' };
                                 }
                                 
-                                // If we have any logged-in indicators, we're logged in
-                                if (hasLogoutLink || hasMyAccountLink || hasAccountMenu || hasDownloadButtons) {
+                                if (hasLogoutLink || hasAccountMenu || hasDownloadButtons) {
                                     return { isLoggedIn: true, reason: 'Found logged-in indicators' };
                                 }
                                 
-                                // Default to logged in (benefit of the doubt on product pages)
                                 return { isLoggedIn: true, reason: 'No clear indicators, assuming logged in' };
-                            });
+                            }, hasWpLoginCookie);
                             
                             console.log(`Session check: ${loginStatus.isLoggedIn ? '✅' : '⚠️'} ${loginStatus.reason}`);
                             
@@ -496,7 +512,57 @@ async function downloadFromChangelog(options = {}) {
                                 });
                                 console.log('⚠️  Session lost, user not logged in on product page');
                                 console.log('Page info:', pageInfo);
-                                throw new Error('Login session expired - please re-login');
+
+                                // Attempt to restore session by re-visiting my-account and re-logging in
+                                console.log('🔄 Refreshing session via my-account');
+                                try {
+                                    await navigateWithRetry(page, 'https://www.realgpl.com/my-account/');
+
+                                    // Check if we need to login again
+                                    const loginFormVisible = await waitForElementReady(page, '#username', 5000);
+                                    if (loginFormVisible) {
+                                        console.log('🔑 Re-entering credentials...');
+                                        await page.type('#username', (process.env.USERNAME || '').toString());
+                                        await page.type('#password', (process.env.PASSWORD || '').toString());
+                                        await waitForElementReady(page, '.button.woocommerce-button.woocommerce-form-login__submit', 10000);
+                                        await page.click('.button.woocommerce-button.woocommerce-form-login__submit');
+                                        await Promise.race([
+                                            page.waitForNavigation({ timeout: 60000, waitUntil: ['load', 'domcontentloaded'] }),
+                                            page.waitForSelector('.woocommerce-MyAccount-navigation', { timeout: 60000 })
+                                        ]).catch(() => {});
+                                    }
+
+                                    // Save fresh cookies and return to product page
+                                    const refreshedCookies = await page.cookies('https://www.realgpl.com/');
+                                    console.log(`💾 Refreshed cookies: ${refreshedCookies.length}`);
+                                    try {
+                                        const validRefreshedCookies = refreshedCookies.filter(cookie =>
+                                            cookie.domain && cookie.domain.includes('realgpl.com')
+                                        );
+                                        if (validRefreshedCookies.length > 0) {
+                                            await page.setCookie(...validRefreshedCookies);
+                                        }
+                                    } catch (setErr) {
+                                        console.log(`Cookie set warning: ${setErr.message}`);
+                                    }
+
+                                    // Navigate back to product page
+                                    await navigateWithRetry(page, data[i].productURL);
+
+                                    // Re-check session status
+                                    const hasWpLoginCookieAfterRefresh = (await page.cookies('https://www.realgpl.com/'))
+                                        .some(c => c.name && c.name.startsWith('wordpress_logged_in'));
+
+                                    if (hasWpLoginCookieAfterRefresh) {
+                                        console.log('✅ Session restored after refresh');
+                                        continue; // Skip the error and continue with download
+                                    } else {
+                                        throw new Error('Session refresh failed');
+                                    }
+                                } catch (restoreErr) {
+                                    console.log(`Session refresh failed: ${restoreErr.message}`);
+                                    throw new Error('Login session expired and could not be restored');
+                                }
                             }
                             
                             // Wait for potential download button elements to load
