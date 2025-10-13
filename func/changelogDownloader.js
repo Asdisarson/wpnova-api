@@ -1,5 +1,6 @@
-// Unified changelog downloader module using Browserless
+// Unified changelog downloader module
 const { 
+    createRegularBrowser,
     createCloudflareBypassBrowser, 
     navigateWithRetry, 
     handleCloudflareChallenge, 
@@ -72,12 +73,12 @@ async function downloadFromChangelog(options = {}) {
             touch('./public/downloads/index.html');
         }
         
-        // Pre-check: Test if the website is reachable before launching Browserless
+        // Pre-check: Test if the website is reachable
         console.log('🔍 Checking website availability...');
         try {
             const testResponse = await axios.get('https://www.realgpl.com', {
                 timeout: 10000,
-                validateStatus: (status) => status < 500, // Accept any status < 500
+                validateStatus: (status) => status < 500,
                 headers: {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
                 }
@@ -85,14 +86,54 @@ async function downloadFromChangelog(options = {}) {
             console.log(`✅ Website is reachable (Status: ${testResponse.status})`);
         } catch (error) {
             console.error(`⚠️  Website pre-check failed: ${error.message}`);
-            console.log('Continuing anyway, Browserless might still work...');
+            console.log('Continuing anyway...');
         }
         
-        // Launch Browserless browser with Cloudflare bypass
-        console.log('🚀 Launching Browserless browser with Cloudflare bypass...');
-        const browserResult = await createCloudflareBypassBrowser();
-        browser = browserResult.browser;
+        // Try regular browser first, fallback to Browserless if needed
+        let browserResult;
+        let usedBrowserless = false;
+        
+        try {
+            console.log('🚀 Attempting with regular Puppeteer browser (no Browserless)...');
+            browserResult = await createRegularBrowser();
+            browser = browserResult.browser;
+            const page = browserResult.page;
+            
+            // Test if we can access the site (check for Cloudflare)
+            console.log('Testing website access...');
+            await page.goto('https://www.realgpl.com', { waitUntil: 'domcontentloaded', timeout: 15000 });
+            
+            // Check for Cloudflare challenge
+            const hasCloudflare = await page.evaluate(() => {
+                return document.title.includes('Just a moment') || 
+                       document.body.innerHTML.includes('Checking your browser') ||
+                       document.body.innerHTML.includes('cloudflare');
+            });
+            
+            if (hasCloudflare) {
+                console.log('⚠️  Cloudflare detected with regular browser, switching to Browserless...');
+                await closeBrowser(browser);
+                throw new Error('Cloudflare challenge detected');
+            }
+            
+            console.log('✅ Regular browser works! Proceeding without Browserless...');
+            
+        } catch (error) {
+            console.log(`❌ Regular browser failed: ${error.message}`);
+            console.log('🔄 Falling back to Browserless with Cloudflare bypass...');
+            
+            if (browser) {
+                await closeBrowser(browser);
+            }
+            
+            browserResult = await createCloudflareBypassBrowser();
+            browser = browserResult.browser;
+            usedBrowserless = true;
+        }
+        
         const page = browserResult.page;
+        console.log(`📊 Using: ${usedBrowserless ? 'Browserless' : 'Regular Puppeteer'}`);
+        
         
         // Add human-like behavior
         await addHumanLikeBehavior(page);
@@ -168,7 +209,31 @@ async function downloadFromChangelog(options = {}) {
         
         // Wait for table to load
         await page.waitForSelector('table#awcpt-product-table-99936', { timeout: 30000 });
-        console.log('✅ Changelog table loaded');
+        console.log('⏳ Table element found, waiting for data to load...');
+        
+        // IMPORTANT: Wait for table rows to be populated (AJAX/JS loaded content)
+        // The table exists but rows are loaded dynamically via JavaScript
+        try {
+            await page.waitForSelector('table#awcpt-product-table-99936 tbody tr.awcpt-row', { 
+                timeout: 60000 
+            });
+        } catch (error) {
+            // Fallback: Try alternate selectors if tbody structure is different
+            console.log('⚠️  Standard row selector failed, trying alternate selector...');
+            await page.waitForSelector('table#awcpt-product-table-99936 tr.awcpt-row', { 
+                timeout: 30000 
+            });
+        }
+        
+        // Extra wait to ensure all dynamic content is loaded
+        await randomDelay(2000, 3000);
+        
+        // Verify rows are actually present
+        const rowCount = await page.evaluate(() => {
+            return document.querySelectorAll('tr.awcpt-row').length;
+        });
+        
+        console.log(`✅ Changelog table data loaded with ${rowCount} total rows`);
         
         // Format date for comparison
         const targetDate = date.toLocaleDateString('en-US', {
@@ -179,20 +244,67 @@ async function downloadFromChangelog(options = {}) {
         
         console.log(`📅 Filtering products for date: ${targetDate}`);
         
-        // Extract product data from changelog
+        // Extract product data from changelog (HTML 4 table structure)
         const data = await page.evaluate((filterDate) => {
             const rows = document.querySelectorAll('tr.awcpt-row');
             const rowDataArray = [];
             
             for (const row of rows) {
-                const date = row.querySelector('.awcpt-date')?.innerText;
+                const cells = row.querySelectorAll('td');
+                
+                // Get date from appropriate cell
+                const date = row.querySelector('.awcpt-date')?.innerText || 
+                            row.querySelector('td[class*="date"]')?.innerText;
                 
                 // Filter by date if specified
                 if (!filterDate || date === filterDate) {
-                    const id = row.getAttribute('data-id');
-                    const productName = row.querySelector('.awcpt-title')?.innerText;
-                    const downloadLink = row.querySelector('.awcpt-shortcode-wrap a')?.getAttribute('href');
-                    const productURL = row.querySelector('.awcpt-prdTitle-col a')?.getAttribute('href');
+                    const id = row.getAttribute('data-id') || row.id;
+                    
+                    // Get product name - try multiple approaches for HTML 4
+                    const productName = row.querySelector('.awcpt-title')?.innerText || 
+                                       row.querySelector('td[class*="title"]')?.innerText ||
+                                       row.querySelector('td strong')?.innerText;
+                    
+                    // Try multiple selectors for download link (based on actual HTML structure)
+                    let downloadLink = null;
+                    
+                    // Method 1: Main download button with yith-wcmbs-download-button class
+                    downloadLink = row.querySelector('.awcpt-shortcode-wrap a.yith-wcmbs-download-button')?.getAttribute('href');
+                    
+                    // Method 2: Any link in awcpt-shortcode-wrap
+                    if (!downloadLink) {
+                        downloadLink = row.querySelector('.awcpt-shortcode-wrap a')?.getAttribute('href');
+                    }
+                    
+                    // Method 3: Look for protected_file parameter (unique to download links)
+                    if (!downloadLink) {
+                        const allLinks = row.querySelectorAll('a');
+                        for (const link of allLinks) {
+                            const href = link.getAttribute('href') || '';
+                            
+                            // Check if it's a download link with protected_file parameter
+                            if (href.includes('protected_file=') || 
+                                href.includes('?add-to-cart=') ||
+                                link.classList.contains('yith-wcmbs-download-button')) {
+                                downloadLink = href;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    // Method 4: Look in last cell (download column)
+                    if (!downloadLink && cells.length > 3) {
+                        const downloadCell = cells[3]; // 4th column is download
+                        const linkInCell = downloadCell.querySelector('a');
+                        if (linkInCell) {
+                            downloadLink = linkInCell.getAttribute('href');
+                        }
+                    }
+                    
+                    // Get product URL
+                    const productURL = row.querySelector('.awcpt-prdTitle-col a')?.getAttribute('href') ||
+                                      row.querySelector('td a[href*="product"]')?.getAttribute('href') ||
+                                      row.querySelector('td a[href*="realgpl.com"]')?.getAttribute('href');
                     
                     if (id && productName) {
                         // Extract version from product name
@@ -249,10 +361,36 @@ async function downloadFromChangelog(options = {}) {
             };
         }
         
+        // Debug: Check if download links are missing and log HTML structure
+        const missingLinks = data.filter(p => !p.downloadLink).length;
+        if (missingLinks > 0) {
+            console.log(`⚠️  ${missingLinks} products missing download links. Investigating HTML structure...`);
+            
+            // Get HTML structure of first row for debugging
+            const sampleRowHTML = await page.evaluate(() => {
+                const firstRow = document.querySelector('tr.awcpt-row');
+                if (firstRow) {
+                    return {
+                        outerHTML: firstRow.outerHTML.substring(0, 1000), // First 1000 chars
+                        classList: Array.from(firstRow.classList),
+                        allLinks: Array.from(firstRow.querySelectorAll('a')).map(a => ({
+                            href: a.getAttribute('href'),
+                            text: a.innerText,
+                            classes: Array.from(a.classList)
+                        }))
+                    };
+                }
+                return null;
+            });
+            
+            console.log('📋 Sample row structure:', JSON.stringify(sampleRowHTML, null, 2));
+        }
+        
         // Display found products
         console.log('\n📦 Products to process:');
         data.forEach((product, index) => {
-            console.log(`${index + 1}. ${product.productName}`);
+            const linkStatus = product.downloadLink ? '✅' : '❌';
+            console.log(`${index + 1}. ${product.productName} ${linkStatus}`);
         });
         
         // Download files if enabled
@@ -271,8 +409,44 @@ async function downloadFromChangelog(options = {}) {
                 console.log(`Product: ${data[i].productName}`);
                 
                 try {
+                    // If no direct download link, try to construct it from product URL or ID
                     if (!data[i].downloadLink) {
-                        throw new Error('No download link available');
+                        // Try to navigate to the product page and find download link
+                        if (data[i].productURL) {
+                            console.log(`🔍 No direct download link, checking product page: ${data[i].productURL}`);
+                            
+                            await page.goto(data[i].productURL, { waitUntil: 'networkidle2', timeout: 30000 });
+                            await randomDelay(1000, 2000);
+                            
+                            // Look for download button/link on product page
+                            const downloadLinkFromPage = await page.evaluate(() => {
+                                // Try common download button selectors
+                                const selectors = [
+                                    'a.download-button',
+                                    'a[href*="download"]',
+                                    '.product-download a',
+                                    'a.button[href*="download"]',
+                                    '.woocommerce-MyAccount-downloads a'
+                                ];
+                                
+                                for (const selector of selectors) {
+                                    const link = document.querySelector(selector);
+                                    if (link) {
+                                        return link.getAttribute('href');
+                                    }
+                                }
+                                return null;
+                            });
+                            
+                            if (downloadLinkFromPage) {
+                                data[i].downloadLink = downloadLinkFromPage;
+                                console.log(`✅ Found download link on product page: ${downloadLinkFromPage}`);
+                            } else {
+                                throw new Error('No download link found on product page');
+                            }
+                        } else {
+                            throw new Error('No download link or product URL available');
+                        }
                     }
                     
                     // Download the file

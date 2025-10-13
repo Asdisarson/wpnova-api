@@ -54,6 +54,65 @@ const randomDelay = (min = 1000, max = 3000) => {
     return Math.floor(Math.random() * (max - min + 1)) + min;
 };
 
+// Create regular Puppeteer browser (no Browserless)
+const createRegularBrowser = async () => {
+    const userAgent = getRandomUserAgent();
+    const viewport = getRandomViewport();
+    
+    console.log(`Using user agent: ${userAgent}`);
+    console.log(`Using viewport: ${viewport.width}x${viewport.height}`);
+    
+    try {
+        // Try to launch local/regular browser (no Browserless)
+        const browser = await puppeteer.launch({
+            headless: true,
+            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--disable-gpu',
+                '--window-size=' + viewport.width + ',' + viewport.height,
+            ]
+        });
+
+        const page = await browser.newPage();
+        
+        // Set viewport
+        await page.setViewport(viewport);
+        
+        // Set user agent
+        await page.setUserAgent(userAgent);
+        
+        // Set additional headers
+        await page.setExtraHTTPHeaders({
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+        });
+
+        // Override navigator properties
+        await page.evaluateOnNewDocument(() => {
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined,
+            });
+        });
+
+        // Set timeouts
+        page.setDefaultTimeout(30000);
+        page.setDefaultNavigationTimeout(30000);
+
+        return { browser, page };
+    } catch (error) {
+        console.error('Failed to create regular browser:', error.message);
+        throw error;
+    }
+};
+
 // Create Browserless browser instance with Cloudflare bypass
 const createCloudflareBypassBrowser = async () => {
     const userAgent = getRandomUserAgent();
@@ -330,6 +389,7 @@ const closeBrowser = async (browser) => {
 };
 
 module.exports = {
+    createRegularBrowser,
     createCloudflareBypassBrowser,
     navigateWithRetry,
     handleCloudflareChallenge,
