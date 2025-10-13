@@ -445,23 +445,42 @@ async function downloadFromChangelog(options = {}) {
                         if (data[i].productURL) {
                             console.log(`🔍 No direct download link, checking product page: ${data[i].productURL}`);
                             
-                            await page.goto(data[i].productURL, { waitUntil: 'networkidle2', timeout: 30000 });
-                            await randomDelay(1000, 2000);
+                            // Use navigateWithRetry to ensure page fully loads and session is maintained
+                            await navigateWithRetry(page, data[i].productURL);
+                            
+                            // Verify we're still logged in by checking for logout link or account elements
+                            const isLoggedIn = await page.evaluate(() => {
+                                const hasLogoutLink = document.querySelector('a[href*="customer-logout"]') !== null;
+                                const hasMyAccount = document.querySelector('.woocommerce-MyAccount-navigation') !== null;
+                                const hasAccountMenu = document.querySelector('.account-menu, .my-account-menu') !== null;
+                                return hasLogoutLink || hasMyAccount || hasAccountMenu;
+                            });
+                            
+                            if (!isLoggedIn) {
+                                console.log('⚠️  Session lost, user not logged in on product page');
+                                throw new Error('Login session expired - please re-login');
+                            }
+                            
+                            // Wait for potential download button elements to load
+                            await delay(randomDelay(1500, 2500));
                             
                             // Look for download button/link on product page
                             const downloadLinkFromPage = await page.evaluate(() => {
                                 // Try common download button selectors
                                 const selectors = [
                                     'a.download-button',
+                                    'a.yith-wcmbs-download-button',
+                                    '.woocommerce-MyAccount-downloads a',
                                     'a[href*="download"]',
                                     '.product-download a',
                                     'a.button[href*="download"]',
-                                    '.woocommerce-MyAccount-downloads a'
+                                    '.download-links a',
+                                    'a[download]'
                                 ];
                                 
                                 for (const selector of selectors) {
                                     const link = document.querySelector(selector);
-                                    if (link) {
+                                    if (link && link.href) {
                                         return link.getAttribute('href');
                                     }
                                 }
@@ -472,6 +491,27 @@ async function downloadFromChangelog(options = {}) {
                                 data[i].downloadLink = downloadLinkFromPage;
                                 console.log(`✅ Found download link on product page: ${downloadLinkFromPage}`);
                             } else {
+                                // Debug: Log what we can see on the page
+                                const pageDebugInfo = await page.evaluate(() => {
+                                    const allLinks = Array.from(document.querySelectorAll('a')).map(a => ({
+                                        href: a.href,
+                                        text: a.textContent.trim().substring(0, 50),
+                                        classes: Array.from(a.classList)
+                                    })).filter(link => 
+                                        link.text.toLowerCase().includes('download') || 
+                                        link.href.toLowerCase().includes('download') ||
+                                        link.classes.some(c => c.includes('download'))
+                                    );
+                                    
+                                    return {
+                                        title: document.title,
+                                        url: window.location.href,
+                                        hasLogoutLink: document.querySelector('a[href*="customer-logout"]') !== null,
+                                        downloadRelatedLinks: allLinks.slice(0, 5)
+                                    };
+                                });
+                                
+                                console.log('🔍 Page debug info:', JSON.stringify(pageDebugInfo, null, 2));
                                 throw new Error('No download link found on product page');
                             }
                         } else {
