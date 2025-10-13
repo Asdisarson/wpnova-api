@@ -97,10 +97,27 @@ async function downloadFromChangelog(options = {}) {
         await page.type('#password', password.toString());
         
         console.log('Submitting login form...');
-        await Promise.all([
-            page.waitForNavigation(),
-            page.click('.button.woocommerce-button.woocommerce-form-login__submit'),
-        ]);
+        
+        // Use a more robust approach with a race condition to handle both navigation and DOM changes
+        try {
+            await Promise.all([
+                page.waitForNavigation({ timeout: 60000 }), // Increased timeout to 60 seconds
+                page.click('.button.woocommerce-button.woocommerce-form-login__submit'),
+            ]);
+        } catch (error) {
+            // If navigation times out, check if we're still logged in by looking for account elements
+            console.log('Navigation wait failed, verifying login status...');
+            const isLoggedIn = await page.evaluate(() => {
+                return document.querySelector('.woocommerce-MyAccount-navigation') !== null ||
+                       document.querySelector('.woocommerce-account') !== null ||
+                       !document.querySelector('#username');
+            });
+            
+            if (!isLoggedIn) {
+                throw new Error('Login failed: ' + error.message);
+            }
+            console.log('✅ Login verified despite navigation timeout');
+        }
         
         console.log('✅ Successfully logged in');
         
