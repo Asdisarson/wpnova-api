@@ -70,11 +70,11 @@ const createCloudflareBypassBrowser = async () => {
 
         // Retry logic for Browserless API calls
         let response;
-        let retries = 3;
+        let retries = 5; // Increased from 3 to 5
         
         while (retries > 0) {
             try {
-                console.log(`Attempting to get Browserless WebSocket endpoint (${4 - retries}/3)...`);
+                console.log(`Attempting to get Browserless WebSocket endpoint (${6 - retries}/5)...`);
                 
                 // Use Browserless cloud service to get a WebSocket endpoint
                 const browserlessUrl = 'https://production-sfo.browserless.io/unblock';
@@ -88,10 +88,11 @@ const createCloudflareBypassBrowser = async () => {
                     params: {
                         token: process.env.BROWSERLESS_API_TOKEN
                     },
-                    timeout: 60000 // 60 second timeout
+                    timeout: 90000 // Increased to 90 seconds
                 });
 
                 if (response.data.browserWSEndpoint) {
+                    console.log('✅ Successfully obtained Browserless WebSocket endpoint');
                     break; // Success, exit retry loop
                 } else {
                     throw new Error('No browserWSEndpoint in response');
@@ -99,10 +100,13 @@ const createCloudflareBypassBrowser = async () => {
             } catch (error) {
                 retries--;
                 if (retries === 0) {
+                    console.error(`❌ Failed to get Browserless endpoint after all retries: ${error.message}`);
                     throw error;
                 }
-                console.log(`Browserless API call failed, retrying in 5 seconds... (${retries} retries left)`);
-                await new Promise(resolve => setTimeout(resolve, 5000));
+                const waitTime = retries > 2 ? 5000 : 10000; // Wait longer after first 2 failures
+                console.log(`⚠️  Browserless API call failed: ${error.message}`);
+                console.log(`Retrying in ${waitTime/1000} seconds... (${retries} retries left)`);
+                await new Promise(resolve => setTimeout(resolve, waitTime));
             }
         }
 

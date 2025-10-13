@@ -72,6 +72,22 @@ async function downloadFromChangelog(options = {}) {
             touch('./public/downloads/index.html');
         }
         
+        // Pre-check: Test if the website is reachable before launching Browserless
+        console.log('🔍 Checking website availability...');
+        try {
+            const testResponse = await axios.get('https://www.realgpl.com', {
+                timeout: 10000,
+                validateStatus: (status) => status < 500, // Accept any status < 500
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+                }
+            });
+            console.log(`✅ Website is reachable (Status: ${testResponse.status})`);
+        } catch (error) {
+            console.error(`⚠️  Website pre-check failed: ${error.message}`);
+            console.log('Continuing anyway, Browserless might still work...');
+        }
+        
         // Launch Browserless browser with Cloudflare bypass
         console.log('🚀 Launching Browserless browser with Cloudflare bypass...');
         const browserResult = await createCloudflareBypassBrowser();
@@ -94,32 +110,56 @@ async function downloadFromChangelog(options = {}) {
         
         console.log('Entering credentials...');
         await page.type('#username', username.toString());
+        await randomDelay(500, 1000);
         await page.type('#password', password.toString());
+        await randomDelay(500, 1000);
         
         console.log('Submitting login form...');
         
-        // Use a more robust approach with a race condition to handle both navigation and DOM changes
+        // Click the login button and wait for either navigation or DOM changes
+        await page.click('.button.woocommerce-button.woocommerce-form-login__submit');
+        
+        // Wait for login success indicators with a race condition
         try {
-            await Promise.all([
-                page.waitForNavigation({ timeout: 60000 }), // Increased timeout to 60 seconds
-                page.click('.button.woocommerce-button.woocommerce-form-login__submit'),
+            await Promise.race([
+                // Option 1: Wait for navigation
+                page.waitForNavigation({ timeout: 60000, waitUntil: 'domcontentloaded' }),
+                // Option 2: Wait for account navigation menu to appear (indicates successful login)
+                page.waitForSelector('.woocommerce-MyAccount-navigation', { timeout: 60000 }),
+                // Option 3: Wait for account content
+                page.waitForSelector('.woocommerce-account', { timeout: 60000 })
             ]);
+            console.log('✅ Successfully logged in');
         } catch (error) {
-            // If navigation times out, check if we're still logged in by looking for account elements
-            console.log('Navigation wait failed, verifying login status...');
-            const isLoggedIn = await page.evaluate(() => {
-                return document.querySelector('.woocommerce-MyAccount-navigation') !== null ||
-                       document.querySelector('.woocommerce-account') !== null ||
-                       !document.querySelector('#username');
+            // Final verification: check if we're logged in by examining the page
+            console.log('⚠️  Login wait timed out, performing final verification...');
+            await randomDelay(2000, 3000); // Give page time to settle
+            
+            const loginStatus = await page.evaluate(() => {
+                const hasAccountNav = document.querySelector('.woocommerce-MyAccount-navigation') !== null;
+                const hasAccountContent = document.querySelector('.woocommerce-account') !== null;
+                const noLoginForm = document.querySelector('#username') === null;
+                const hasLogoutLink = document.querySelector('a[href*="customer-logout"]') !== null;
+                const currentUrl = window.location.href;
+                
+                return {
+                    hasAccountNav,
+                    hasAccountContent,
+                    noLoginForm,
+                    hasLogoutLink,
+                    currentUrl,
+                    isLoggedIn: hasAccountNav || hasAccountContent || (noLoginForm && hasLogoutLink)
+                };
             });
             
-            if (!isLoggedIn) {
-                throw new Error('Login failed: ' + error.message);
+            console.log('Login status check:', loginStatus);
+            
+            if (!loginStatus.isLoggedIn) {
+                throw new Error(`Login verification failed: ${error.message}`);
             }
-            console.log('✅ Login verified despite navigation timeout');
+            
+            console.log('✅ Login verified successfully (URL: ' + loginStatus.currentUrl + ')');
         }
-        
-        console.log('✅ Successfully logged in');
         
         // Navigate to changelog page
         const changelogUrl = `https://www.realgpl.com/changelog/?99936_results_per_page=${resultsPerPage}`;
