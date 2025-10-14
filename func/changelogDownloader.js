@@ -103,7 +103,7 @@ async function downloadFromChangelog(options = {}) {
         const usedUnblockAPI = sessionResult.usedUnblockAPI;
         const usedBrowserless = sessionResult.usedBrowserless;
         const isNewSession = sessionResult.isNewSession;
-        const wasLoggedIn = sessionResult.isLoggedIn;
+        let wasLoggedIn = sessionResult.isLoggedIn;
         
         console.log(`📊 Using: ${usedBrowserless ? (usedUnblockAPI ? 'Browserless Unblock API' : 'Browserless WebSocket') : 'Regular Puppeteer'}`);
         console.log(`🔄 Session: ${isNewSession ? 'New' : 'Reused'} | Logged in: ${wasLoggedIn ? 'Yes' : 'No'}`);

@@ -1,4 +1,5 @@
 // Browserless session manager for maintaining login state across requests
+const puppeteer = require('puppeteer-core');
 const { createCloudflareBypassBrowser, createRegularBrowser } = require('./cloudflareBypass');
 
 // Session storage
@@ -29,12 +30,63 @@ const SESSION_CONFIG = {
 let sessionIdleTimer = null;
 
 /**
+ * Attempt to reconnect to an existing Browserless session
+ * @returns {Promise<boolean>}
+ */
+async function reconnectBrowserSession() {
+    if (!currentSession.browserWSEndpoint) {
+        return false;
+    }
+
+    try {
+        console.log('🔄 Attempting to reconnect to existing Browserless session...');
+        const browser = await puppeteer.connect({
+            browserWSEndpoint: currentSession.browserWSEndpoint,
+            defaultViewport: null,
+            protocolTimeout: 180000
+        });
+
+        currentSession.browser = browser;
+
+        // Try to reuse an existing page, otherwise create a new one
+        let page = null;
+        try {
+            const pages = await browser.pages();
+            page = pages.length ? pages[0] : await browser.newPage();
+        } catch (pageError) {
+            console.log(`⚠️  Page restoration warning: ${pageError.message}`);
+            page = await browser.newPage();
+        }
+
+        currentSession.page = page;
+        currentSession.lastUsedAt = Date.now();
+        console.log('✅ Reconnected to Browserless session successfully');
+        return true;
+    } catch (error) {
+        console.log(`⚠️  Browserless reconnection failed: ${error.message}`);
+        currentSession.browserWSEndpoint = null;
+        currentSession.browser = null;
+        currentSession.page = null;
+        currentSession.isLoggedIn = false;
+        return false;
+    }
+}
+
+/**
  * Check if current session is still valid and usable
  */
 async function isSessionValid() {
-    if (!currentSession.browserWSEndpoint || !currentSession.browser) {
+    if (!currentSession.browser && currentSession.browserWSEndpoint) {
+        const reconnected = await reconnectBrowserSession();
+        if (!reconnected) {
+            return false;
+        }
+    }
+
+    if (!currentSession.browser) {
         return false;
     }
+
     
     // Check if session is too old
     const sessionAge = Date.now() - currentSession.createdAt;
@@ -346,4 +398,3 @@ module.exports = {
     getSessionInfo,
     SESSION_CONFIG
 };
-
