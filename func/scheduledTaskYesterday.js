@@ -409,6 +409,12 @@ const scheduledTask = async (date = new Date()) => {
                 if (cookies.length > 0) {
                     await page.deleteCookie(...cookies);
                     console.log(`✅ Cleared ${cookies.length} cookies`);
+                    
+                    // Reload the page so it can detect the missing cookies and show login form
+                    console.log('🔄 Reloading page to trigger login form...');
+                    await page.reload({ waitUntil: 'domcontentloaded' });
+                    await delay(randomDelay(2000, 3000));
+                    console.log('✅ Page reloaded');
                 } else {
                     console.log('No cookies to clear');
                 }
@@ -416,7 +422,7 @@ const scheduledTask = async (date = new Date()) => {
                 console.log(`⚠️  Cookie clearing warning: ${error.message}`);
             }
 
-            // Handle consent block if it appears
+            // Handle consent block if it appears (after reload)
             try {
                 const consentExists = await waitForElementReady(page, '.fc-button-label', 5000);
                 if (consentExists) {
@@ -1233,6 +1239,12 @@ const downloadAllFiles = async (date = new Date()) => {
                 if (cookies.length > 0) {
                     await page.deleteCookie(...cookies);
                     console.log(`✅ Cleared ${cookies.length} cookies`);
+                    
+                    // Reload the page so it can detect the missing cookies and show login form
+                    console.log('🔄 Reloading page to trigger login form...');
+                    await page.reload({ waitUntil: 'domcontentloaded' });
+                    await delay(randomDelay(2000, 3000));
+                    console.log('✅ Page reloaded');
                 } else {
                     console.log('No cookies to clear');
                 }
@@ -1240,7 +1252,7 @@ const downloadAllFiles = async (date = new Date()) => {
                 console.log(`⚠️  Cookie clearing warning: ${error.message}`);
             }
 
-            // Handle consent block if it appears
+            // Handle consent block if it appears (after reload)
             try {
                 const consentExists = await waitForElementReady(page, '.fc-button-label', 5000);
                 if (consentExists) {
