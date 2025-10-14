@@ -8,7 +8,10 @@ const {
     waitForElementReady,
     getCookies,
     closeBrowser,
-    randomDelay 
+    randomDelay,
+    saveCookiesToDisk,
+    loadCookiesFromDisk,
+    applyCookiesToPage
 } = require('./cloudflareBypass');
 const JSONdb = require('simple-json-db');
 const fs = require('fs');
@@ -138,13 +141,49 @@ async function downloadFromChangelog(options = {}) {
         const page = browserResult.page;
         console.log(`📊 Using: ${usedBrowserless ? 'Browserless' : 'Regular Puppeteer'}`);
         
-        
         // Add human-like behavior
         await addHumanLikeBehavior(page);
         
-        // Login to the site
-        console.log('🔐 Logging in to RealGPL...');
-        await navigateWithRetry(page, 'https://www.realgpl.com/my-account/');
+        // Declare loginCookies variable at the start
+        let loginCookies = [];
+        
+        // Try to load existing cookies first (for Browserless sessions)
+        let persistentCookies = [];
+        let shouldSkipLogin = false;
+        
+        if (usedBrowserless) {
+            console.log('🍪 Attempting to restore previous session cookies...');
+            persistentCookies = await loadCookiesFromDisk();
+            if (persistentCookies.length > 0) {
+                await applyCookiesToPage(page, persistentCookies);
+                
+                // Test if we're already logged in
+                console.log('🔍 Checking if session is still valid...');
+                await navigateWithRetry(page, 'https://www.realgpl.com/my-account/');
+                await randomDelay(2000, 3000);
+                
+                const isAlreadyLoggedIn = await page.evaluate(() => {
+                    const hasAccountNav = document.querySelector('.woocommerce-MyAccount-navigation') !== null;
+                    const hasAccountContent = document.querySelector('.woocommerce-account') !== null;
+                    const noLoginForm = document.querySelector('#username') === null;
+                    const hasLogoutLink = document.querySelector('a[href*="customer-logout"]') !== null;
+                    return hasAccountNav || hasAccountContent || (noLoginForm && hasLogoutLink);
+                });
+                
+                if (isAlreadyLoggedIn) {
+                    console.log('✅ Session restored successfully! Skipping login...');
+                    loginCookies = await page.cookies('https://www.realgpl.com/');
+                    shouldSkipLogin = true;
+                } else {
+                    console.log('⚠️  Session expired, proceeding with fresh login...');
+                }
+            }
+        }
+        
+        // Only perform login if we're not already logged in
+        if (!shouldSkipLogin) {
+            console.log('🔐 Logging in to RealGPL...');
+            await navigateWithRetry(page, 'https://www.realgpl.com/my-account/');
         
         try {
             // Wait for consent block to be ready before clicking
@@ -227,8 +266,14 @@ async function downloadFromChangelog(options = {}) {
         
         // Save cookies after successful login to maintain session
         // Read cookies for the site origin explicitly
-        const loginCookies = await page.cookies('https://www.realgpl.com/');
+        loginCookies = await page.cookies('https://www.realgpl.com/');
         console.log(`💾 Saved ${loginCookies.length} session cookies`);
+        
+        // Save cookies to disk for persistence in Browserless sessions
+        if (usedBrowserless && loginCookies.length > 0) {
+            await saveCookiesToDisk(loginCookies);
+        }
+        }
         
         // Navigate to changelog page
         const changelogUrl = `https://www.realgpl.com/changelog/?99936_results_per_page=${resultsPerPage}`;
@@ -452,20 +497,9 @@ async function downloadFromChangelog(options = {}) {
                             
                             // Restore session cookies before navigating to product page
                             console.log('🔄 Restoring session cookies...');
-                            try {
-                                // Filter cookies to only include those for the current domain
-                                const validCookies = loginCookies.filter(cookie =>
-                                    cookie.domain && cookie.domain.includes('realgpl.com')
-                                );
-
-                                if (validCookies.length > 0) {
-                                    console.log(`Setting ${validCookies.length} valid cookies`);
-                                    await page.setCookie(...validCookies);
-                                } else {
-                                    console.log('No valid cookies to restore');
-                                }
-                            } catch (cookieErr) {
-                                console.log(`Cookie restoration warning: ${cookieErr.message}`);
+                            const cookieSuccess = await applyCookiesToPage(page, loginCookies);
+                            if (!cookieSuccess) {
+                                console.log('⚠️  Cookie restoration failed, proceeding anyway...');
                             }
                             
                             // Use navigateWithRetry to ensure page fully loads and session is maintained
@@ -533,18 +567,17 @@ async function downloadFromChangelog(options = {}) {
                                     }
 
                                     // Save fresh cookies and return to product page
-                                    const refreshedCookies = await page.cookies('https://www.realgpl.com/');
+                                    const refreshedCookies = await getCookies(page);
                                     console.log(`💾 Refreshed cookies: ${refreshedCookies.length}`);
-                                    try {
-                                        const validRefreshedCookies = refreshedCookies.filter(cookie =>
-                                            cookie.domain && cookie.domain.includes('realgpl.com')
-                                        );
-                                        if (validRefreshedCookies.length > 0) {
-                                            await page.setCookie(...validRefreshedCookies);
-                                        }
-                                    } catch (setErr) {
-                                        console.log(`Cookie set warning: ${setErr.message}`);
+                                    
+                                    // Update main login cookies and save to disk
+                                    loginCookies = refreshedCookies;
+                                    if (usedBrowserless && refreshedCookies.length > 0) {
+                                        await saveCookiesToDisk(refreshedCookies);
                                     }
+                                    
+                                    // Apply refreshed cookies
+                                    await applyCookiesToPage(page, refreshedCookies);
 
                                     // Navigate back to product page
                                     await navigateWithRetry(page, data[i].productURL);

@@ -175,10 +175,11 @@ const createCloudflareBypassBrowser = async () => {
 
         console.log('Connecting to Browserless WebSocket endpoint...');
         
-        // Connect to the Browserless WebSocket endpoint
+        // Connect to the Browserless WebSocket endpoint with increased timeout
         const browser = await puppeteer.connect({
             browserWSEndpoint: response.data.browserWSEndpoint,
-            defaultViewport: null
+            defaultViewport: null,
+            protocolTimeout: 180000 // 3 minutes timeout for protocol operations
         });
 
         const page = await browser.newPage();
@@ -417,14 +418,134 @@ const addHumanLikeBehavior = async (page) => {
     });
 };
 
-// Function to get cookies from Browserless page
-const getCookies = async (page) => {
+// Function to get cookies from Browserless page with timeout handling
+const getCookies = async (page, retries = 3) => {
+    for (let i = 0; i < retries; i++) {
+        try {
+            // Set a reasonable timeout for cookie operations
+            const cookies = await Promise.race([
+                page.cookies(),
+                new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Cookie operation timeout')), 30000)
+                )
+            ]);
+            return cookies;
+        } catch (error) {
+            console.warn(`Cookie retrieval attempt ${i + 1}/${retries} failed:`, error.message);
+            if (i === retries - 1) {
+                console.error('All cookie retrieval attempts failed:', error);
+                return [];
+            }
+            // Wait before retrying
+            await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+    }
+    return [];
+};
+
+// Persistent cookie management for Browserless sessions
+const fs = require('fs');
+const path = require('path');
+
+const COOKIE_FILE_PATH = path.join(__dirname, 'session_cookies.json');
+
+// Save cookies to disk
+const saveCookiesToDisk = async (cookies) => {
     try {
-        return await page.cookies();
+        // Only save valid cookies with required properties
+        const validCookies = cookies.filter(cookie => 
+            cookie.name && cookie.value && cookie.domain && 
+            cookie.domain.includes('realgpl.com')
+        );
+        
+        const cookieData = {
+            timestamp: Date.now(),
+            cookies: validCookies
+        };
+        
+        await fs.promises.writeFile(COOKIE_FILE_PATH, JSON.stringify(cookieData, null, 2));
+        console.log(`💾 Saved ${validCookies.length} cookies to disk`);
+        return validCookies;
     } catch (error) {
-        console.error('Failed to get cookies:', error);
+        console.error('Failed to save cookies to disk:', error);
         return [];
     }
+};
+
+// Load cookies from disk
+const loadCookiesFromDisk = async () => {
+    try {
+        if (!fs.existsSync(COOKIE_FILE_PATH)) {
+            console.log('🍪 No saved cookies found');
+            return [];
+        }
+        
+        const cookieData = JSON.parse(await fs.promises.readFile(COOKIE_FILE_PATH, 'utf8'));
+        const cookieAge = Date.now() - cookieData.timestamp;
+        const maxAge = 24 * 60 * 60 * 1000; // 24 hours
+        
+        if (cookieAge > maxAge) {
+            console.log('🍪 Saved cookies are too old, ignoring');
+            return [];
+        }
+        
+        console.log(`🍪 Loaded ${cookieData.cookies.length} cookies from disk (age: ${Math.round(cookieAge / 1000 / 60)} mins)`);
+        return cookieData.cookies;
+    } catch (error) {
+        console.error('Failed to load cookies from disk:', error);
+        return [];
+    }
+};
+
+// Apply cookies to page with better error handling and timeouts
+const applyCookiesToPage = async (page, cookies, retries = 3) => {
+    if (!cookies || cookies.length === 0) {
+        console.log('🍪 No cookies to apply');
+        return false;
+    }
+    
+    for (let i = 0; i < retries; i++) {
+        try {
+            // Clear existing cookies first with timeout
+            const currentCookies = await Promise.race([
+                page.cookies(),
+                new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Get cookies timeout')), 15000)
+                )
+            ]);
+            
+            if (currentCookies.length > 0) {
+                await Promise.race([
+                    page.deleteCookie(...currentCookies),
+                    new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('Delete cookies timeout')), 15000)
+                    )
+                ]);
+            }
+            
+            // Apply saved cookies with timeout
+            await Promise.race([
+                page.setCookie(...cookies),
+                new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Set cookies timeout')), 15000)
+                )
+            ]);
+            
+            console.log(`✅ Applied ${cookies.length} cookies to page`);
+            return true;
+            
+        } catch (error) {
+            console.warn(`Cookie application attempt ${i + 1}/${retries} failed:`, error.message);
+            if (i === retries - 1) {
+                console.error('All cookie application attempts failed:', error.message);
+                return false;
+            }
+            // Wait before retrying
+            await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+    }
+    
+    return false;
 };
 
 // Function to close Browserless browser
@@ -434,6 +555,65 @@ const closeBrowser = async (browser) => {
     } catch (error) {
         console.error('Failed to close browser:', error);
     }
+};
+
+// Session health management
+let currentBrowserSession = null;
+let sessionCreateTime = null;
+const MAX_SESSION_AGE = 30 * 60 * 1000; // 30 minutes
+
+// Check if current browser session is still healthy
+const isSessionHealthy = async () => {
+    if (!currentBrowserSession || !sessionCreateTime) {
+        return false;
+    }
+    
+    // Check session age
+    const sessionAge = Date.now() - sessionCreateTime;
+    if (sessionAge > MAX_SESSION_AGE) {
+        console.log('🕒 Browser session too old, needs refresh');
+        return false;
+    }
+    
+    try {
+        // Try to get browser version - if this fails, session is dead
+        const browser = currentBrowserSession.browser;
+        await browser.version();
+        console.log(`✅ Browser session healthy (age: ${Math.round(sessionAge / 1000 / 60)} mins)`);
+        return true;
+    } catch (error) {
+        console.log(`❌ Browser session unhealthy: ${error.message}`);
+        currentBrowserSession = null;
+        sessionCreateTime = null;
+        return false;
+    }
+};
+
+// Get or create a browser session with session reuse
+const getBrowserSession = async () => {
+    // Try to reuse existing session if healthy
+    if (currentBrowserSession && await isSessionHealthy()) {
+        console.log('♻️  Reusing existing browser session');
+        return currentBrowserSession;
+    }
+    
+    // Clean up old session
+    if (currentBrowserSession) {
+        try {
+            await closeBrowser(currentBrowserSession.browser);
+        } catch (error) {
+            console.log('Session cleanup warning:', error.message);
+        }
+        currentBrowserSession = null;
+    }
+    
+    // Create new session
+    console.log('🆕 Creating new browser session...');
+    const browserResult = await createCloudflareBypassBrowser();
+    currentBrowserSession = browserResult;
+    sessionCreateTime = Date.now();
+    
+    return browserResult;
 };
 
 module.exports = {
@@ -447,5 +627,10 @@ module.exports = {
     closeBrowser,
     randomDelay,
     getRandomUserAgent,
-    getRandomViewport
+    getRandomViewport,
+    saveCookiesToDisk,
+    loadCookiesFromDisk,
+    applyCookiesToPage,
+    getBrowserSession,
+    isSessionHealthy
 };

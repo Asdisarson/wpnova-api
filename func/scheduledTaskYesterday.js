@@ -6,7 +6,10 @@ const {
     waitForElementReady,
     getCookies,
     closeBrowser,
-    randomDelay 
+    randomDelay,
+    saveCookiesToDisk,
+    loadCookiesFromDisk,
+    applyCookiesToPage
 } = require('./cloudflareBypass');
 const JSONdb = require('simple-json-db');
 const fs = require('fs');
