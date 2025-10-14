@@ -8,10 +8,7 @@ const {
     waitForElementReady,
     getCookies,
     closeBrowser,
-    randomDelay,
-    saveCookiesToDisk,
-    loadCookiesFromDisk,
-    applyCookiesToPage
+    randomDelay
 } = require('./cloudflareBypass');
 const JSONdb = require('simple-json-db');
 const fs = require('fs');
@@ -144,49 +141,27 @@ async function downloadFromChangelog(options = {}) {
         // Add human-like behavior
         await addHumanLikeBehavior(page);
         
-        // Declare loginCookies variable at the start
-        let loginCookies = [];
+        // Go directly to changelog page
+        const changelogUrl = `https://www.realgpl.com/changelog/?99936_results_per_page=${resultsPerPage}`;
+        console.log(`📋 Going directly to changelog: ${changelogUrl}`);
+        await navigateWithRetry(page, changelogUrl);
         
-        // Try to load existing cookies first (for Browserless sessions)
-        let persistentCookies = [];
-        let shouldSkipLogin = false;
-        
-        if (usedBrowserless) {
-            console.log('🍪 Attempting to restore previous session cookies...');
-            persistentCookies = await loadCookiesFromDisk();
-            if (persistentCookies.length > 0) {
-                await applyCookiesToPage(page, persistentCookies);
-                
-                // Test if we're already logged in
-                console.log('🔍 Checking if session is still valid...');
-                await navigateWithRetry(page, 'https://www.realgpl.com/my-account/');
-                await randomDelay(2000, 3000);
-                
-                const isAlreadyLoggedIn = await page.evaluate(() => {
-                    const hasAccountNav = document.querySelector('.woocommerce-MyAccount-navigation') !== null;
-                    const hasAccountContent = document.querySelector('.woocommerce-account') !== null;
-                    const noLoginForm = document.querySelector('#username') === null;
-                    const hasLogoutLink = document.querySelector('a[href*="customer-logout"]') !== null;
-                    return hasAccountNav || hasAccountContent || (noLoginForm && hasLogoutLink);
-                });
-                
-                if (isAlreadyLoggedIn) {
-                    console.log('✅ Session restored successfully! Skipping login...');
-                    loginCookies = await page.cookies('https://www.realgpl.com/');
-                    shouldSkipLogin = true;
-                } else {
-                    console.log('⚠️  Session expired, proceeding with fresh login...');
-                }
+        // Clear all cookies for a clean slate before login
+        console.log('🧹 Clearing all cookies for fresh login...');
+        try {
+            const cookies = await page.cookies();
+            if (cookies.length > 0) {
+                await page.deleteCookie(...cookies);
+                console.log(`✅ Cleared ${cookies.length} cookies`);
+            } else {
+                console.log('No cookies to clear');
             }
+        } catch (error) {
+            console.log(`⚠️  Cookie clearing warning: ${error.message}`);
         }
         
-        // Only perform login if we're not already logged in
-        if (!shouldSkipLogin) {
-            console.log('🔐 Logging in to RealGPL...');
-            await navigateWithRetry(page, 'https://www.realgpl.com/my-account/');
-        
+        // Handle consent block if it appears
         try {
-            // Wait for consent block to be ready before clicking
             const consentExists = await waitForElementReady(page, '.fc-button-label', 5000);
             if (consentExists) {
                 await page.click('.fc-button-label');
@@ -197,88 +172,62 @@ async function downloadFromChangelog(options = {}) {
             console.log('No Consent block')
         }
         
-        const username = process.env.USERNAME;
-        const password = process.env.PASSWORD;
+        // Check if we need to login on the changelog page
+        console.log('🔍 Checking if login is needed...');
+        const needsLogin = await page.evaluate(() => {
+            // Check if there's a login form visible
+            const loginForm = document.querySelector('form.login, form.woocommerce-form-login, #username');
+            const hasTable = document.querySelector('table#awcpt-product-table-99936') !== null;
+            return loginForm !== null || !hasTable;
+        });
         
-        if (!username || !password) {
-            throw new Error('USERNAME and PASSWORD environment variables are required');
-        }
-        
-        // Wait for login form to be fully loaded
-        await waitForElementReady(page, '#username');
-        await waitForElementReady(page, '#password');
-        
-        console.log('Entering credentials...');
-        await page.type('#username', username.toString());
-        await delay(randomDelay(500, 1000));
-        await page.type('#password', password.toString());
-        await delay(randomDelay(500, 1000));
-        
-        // Wait for login button to be ready
-        await waitForElementReady(page, '.button.woocommerce-button.woocommerce-form-login__submit');
-        
-        console.log('Submitting login form...');
-        
-        // Click the login button and wait for either navigation or DOM changes
-        await page.click('.button.woocommerce-button.woocommerce-form-login__submit');
-        
-        // Wait for login success indicators with a race condition
-        try {
-            await Promise.race([
-                // Option 1: Wait for navigation
-                page.waitForNavigation({ timeout: 60000, waitUntil: 'domcontentloaded' }),
-                // Option 2: Wait for account navigation menu to appear (indicates successful login)
-                page.waitForSelector('.woocommerce-MyAccount-navigation', { timeout: 60000 }),
-                // Option 3: Wait for account content
-                page.waitForSelector('.woocommerce-account', { timeout: 60000 })
-            ]);
-            console.log('✅ Successfully logged in');
-        } catch (error) {
-            // Final verification: check if we're logged in by examining the page
-            console.log('⚠️  Login wait timed out, performing final verification...');
-            await randomDelay(2000, 3000); // Give page time to settle
+        if (needsLogin) {
+            console.log('🔐 Login required - logging in on changelog page...');
             
-            const loginStatus = await page.evaluate(() => {
-                const hasAccountNav = document.querySelector('.woocommerce-MyAccount-navigation') !== null;
-                const hasAccountContent = document.querySelector('.woocommerce-account') !== null;
-                const noLoginForm = document.querySelector('#username') === null;
-                const hasLogoutLink = document.querySelector('a[href*="customer-logout"]') !== null;
-                const currentUrl = window.location.href;
-                
-                return {
-                    hasAccountNav,
-                    hasAccountContent,
-                    noLoginForm,
-                    hasLogoutLink,
-                    currentUrl,
-                    isLoggedIn: hasAccountNav || hasAccountContent || (noLoginForm && hasLogoutLink)
-                };
-            });
+            const username = process.env.USERNAME;
+            const password = process.env.PASSWORD;
             
-            console.log('Login status check:', loginStatus);
-            
-            if (!loginStatus.isLoggedIn) {
-                throw new Error(`Login verification failed: ${error.message}`);
+            if (!username || !password) {
+                throw new Error('USERNAME and PASSWORD environment variables are required');
             }
             
-            console.log('✅ Login verified successfully (URL: ' + loginStatus.currentUrl + ')');
+            // Wait for and fill login form
+            await waitForElementReady(page, '#username');
+            await waitForElementReady(page, '#password');
+            
+            console.log('Entering credentials...');
+            await page.type('#username', username.toString());
+            await delay(randomDelay(500, 1000));
+            await page.type('#password', password.toString());
+            await delay(randomDelay(500, 1000));
+            
+            // Submit login form
+            const loginButton = await page.$('.button.woocommerce-button.woocommerce-form-login__submit, input[type="submit"][name="login"]');
+            if (loginButton) {
+                console.log('Submitting login form...');
+                await loginButton.click();
+                
+                // Wait for page to reload/update after login
+                await delay(randomDelay(3000, 5000));
+                console.log('✅ Login submitted, checking results...');
+                
+                // Verify login was successful by checking if table is now visible
+                const tableVisible = await waitForElementReady(page, 'table#awcpt-product-table-99936', 30000);
+                if (tableVisible) {
+                    console.log('✅ Login successful - table is now visible');
+                } else {
+                    throw new Error('Login may have failed - table still not visible');
+                }
+            } else {
+                throw new Error('Login button not found on changelog page');
+            }
+        } else {
+            console.log('✅ Already logged in - table is visible');
         }
         
-        // Save cookies after successful login to maintain session
-        // Read cookies for the site origin explicitly
-        loginCookies = await page.cookies('https://www.realgpl.com/');
-        console.log(`💾 Saved ${loginCookies.length} session cookies`);
-        
-        // Save cookies to disk for persistence in Browserless sessions
-        if (usedBrowserless && loginCookies.length > 0) {
-            await saveCookiesToDisk(loginCookies);
-        }
-        }
-        
-        // Navigate to changelog page
-        const changelogUrl = `https://www.realgpl.com/changelog/?99936_results_per_page=${resultsPerPage}`;
-        console.log(`📋 Navigating to changelog: ${changelogUrl}`);
-        await navigateWithRetry(page, changelogUrl);
+        // Get cookies for download requests
+        const loginCookies = await page.cookies('https://www.realgpl.com/');
+        console.log(`💾 Using ${loginCookies.length} session cookies`);
         
         // Wait for table to be fully loaded and interactive
         console.log('⏳ Waiting for changelog table to load...');
@@ -497,9 +446,16 @@ async function downloadFromChangelog(options = {}) {
                             
                             // Restore session cookies before navigating to product page
                             console.log('🔄 Restoring session cookies...');
-                            const cookieSuccess = await applyCookiesToPage(page, loginCookies);
-                            if (!cookieSuccess) {
-                                console.log('⚠️  Cookie restoration failed, proceeding anyway...');
+                            try {
+                                const validCookies = loginCookies.filter(cookie =>
+                                    cookie.domain && cookie.domain.includes('realgpl.com')
+                                );
+                                if (validCookies.length > 0) {
+                                    await page.setCookie(...validCookies);
+                                    console.log(`✅ Applied ${validCookies.length} cookies`);
+                                }
+                            } catch (cookieErr) {
+                                console.log(`⚠️  Cookie restoration warning: ${cookieErr.message}`);
                             }
                             
                             // Use navigateWithRetry to ensure page fully loads and session is maintained
@@ -567,17 +523,11 @@ async function downloadFromChangelog(options = {}) {
                                     }
 
                                     // Save fresh cookies and return to product page
-                                    const refreshedCookies = await getCookies(page);
+                                    const refreshedCookies = await page.cookies('https://www.realgpl.com/');
                                     console.log(`💾 Refreshed cookies: ${refreshedCookies.length}`);
                                     
-                                    // Update main login cookies and save to disk
+                                    // Update main login cookies  
                                     loginCookies = refreshedCookies;
-                                    if (usedBrowserless && refreshedCookies.length > 0) {
-                                        await saveCookiesToDisk(refreshedCookies);
-                                    }
-                                    
-                                    // Apply refreshed cookies
-                                    await applyCookiesToPage(page, refreshedCookies);
 
                                     // Navigate back to product page
                                     await navigateWithRetry(page, data[i].productURL);
