@@ -188,20 +188,37 @@ async function downloadFromChangelog(options = {}) {
                     
                     // Click to reveal login form
                     await page.click('.wd-tools-text');
-                    await delay(randomDelay(1500, 2500));
                     console.log('✅ Clicked login form toggle button');
+                    
+                    // Wait for the login form to become visible (not just present in DOM)
+                    console.log('⏳ Waiting for login form to appear...');
+                    await page.waitForFunction(() => {
+                        const form = document.querySelector('form#customer_login, form.woocommerce-form-login');
+                        if (!form) return false;
+                        const style = window.getComputedStyle(form);
+                        return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+                    }, { timeout: 10000 });
+                    
+                    await delay(randomDelay(1000, 1500));
+                    console.log('✅ Login form is now visible');
                 }
             } catch (error) {
-                console.log('⚠️  Login toggle button not found or already visible');
+                console.log(`⚠️  Login toggle issue: ${error.message}`);
             }
             
             // Check if we need to login on the changelog page
             console.log('🔍 Checking if login is needed...');
             const needsLogin = await page.evaluate(() => {
-                // Check if there's a login form visible
-                const loginForm = document.querySelector('form.login, form.woocommerce-form-login, #username');
+                // Check if login form is visible (not just present in DOM)
+                const loginForm = document.querySelector('form#customer_login, form.woocommerce-form-login');
+                if (loginForm) {
+                    const style = window.getComputedStyle(loginForm);
+                    const isVisible = style.display !== 'none' && style.visibility !== 'hidden';
+                    if (isVisible) return true;
+                }
+                // If no visible login form, check if table is present
                 const hasTable = document.querySelector('table#awcpt-product-table-99936') !== null;
-                return loginForm !== null || !hasTable;
+                return !hasTable;
             });
             
             if (needsLogin) {
@@ -214,7 +231,7 @@ async function downloadFromChangelog(options = {}) {
                 throw new Error('USERNAME and PASSWORD environment variables are required');
             }
             
-            // Wait for and fill login form
+            // Wait for and fill login form (form should now be visible)
             await waitForElementReady(page, '#username');
             await waitForElementReady(page, '#password');
             
