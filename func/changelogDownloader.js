@@ -174,6 +174,27 @@ async function downloadFromChangelog(options = {}) {
                 console.log('No Consent block')
             }
             
+            // Click the button to reveal the login form
+            console.log('🔘 Looking for login form toggle button...');
+            try {
+                // Wait for and click the element with class wd-tools-text to reveal login form
+                const loginToggleExists = await waitForElementReady(page, '.wd-tools-text', 5000);
+                if (loginToggleExists) {
+                    const buttonText = await page.evaluate(() => {
+                        const el = document.querySelector('.wd-tools-text');
+                        return el ? el.innerText || el.textContent : 'unknown';
+                    });
+                    console.log(`Found login toggle with text: "${buttonText}"`);
+                    
+                    // Click to reveal login form
+                    await page.click('.wd-tools-text');
+                    await delay(randomDelay(1500, 2500));
+                    console.log('✅ Clicked login form toggle button');
+                }
+            } catch (error) {
+                console.log('⚠️  Login toggle button not found or already visible');
+            }
+            
             // Check if we need to login on the changelog page
             console.log('🔍 Checking if login is needed...');
             const needsLogin = await page.evaluate(() => {
