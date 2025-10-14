@@ -177,17 +177,26 @@ async function downloadFromChangelog(options = {}) {
             // Click the button to reveal the login form
             console.log('🔘 Looking for login form toggle button...');
             try {
-                // Wait for and click the element with class wd-tools-text to reveal login form
-                const loginToggleExists = await waitForElementReady(page, '.wd-tools-text', 5000);
-                if (loginToggleExists) {
-                    const buttonText = await page.evaluate(() => {
-                        const el = document.querySelector('.wd-tools-text');
-                        return el ? el.innerText || el.textContent : 'unknown';
+                // Find the login button by text content (not just class)
+                const loginButton = await page.evaluateHandle(() => {
+                    // Look for elements that contain "LOGIN" or "REGISTER" text
+                    const elements = Array.from(document.querySelectorAll('a, button, .wd-tools-element'));
+                    return elements.find(el => {
+                        const text = (el.innerText || el.textContent || '').toUpperCase();
+                        return (text.includes('LOGIN') || text.includes('REGISTER')) && 
+                               !text.includes('ITEMS') && 
+                               !text.includes('$');
                     });
-                    console.log(`Found login toggle with text: "${buttonText}"`);
+                });
+                
+                const loginButtonExists = await loginButton.evaluate(el => !!el).catch(() => false);
+                
+                if (loginButtonExists) {
+                    const buttonText = await loginButton.evaluate(el => el.innerText || el.textContent);
+                    console.log(`Found login toggle with text: "${buttonText.trim()}"`);
                     
                     // Click to reveal login form
-                    await page.click('.wd-tools-text');
+                    await loginButton.click();
                     console.log('✅ Clicked login form toggle button');
                     
                     // Wait for the login form to become visible (not just present in DOM)
@@ -201,6 +210,8 @@ async function downloadFromChangelog(options = {}) {
                     
                     await delay(randomDelay(1000, 1500));
                     console.log('✅ Login form is now visible');
+                } else {
+                    console.log('⚠️  Login toggle button not found');
                 }
             } catch (error) {
                 console.log(`⚠️  Login toggle issue: ${error.message}`);
