@@ -113,8 +113,8 @@ const createRegularBrowser = async () => {
     }
 };
 
-// Create Browserless browser instance with Cloudflare bypass (standard method)
-const createCloudflareBypassBrowser = async (useUnblockAPI = false) => {
+// Create Browserless browser instance with Cloudflare bypass
+const createCloudflareBypassBrowser = async () => {
     const userAgent = getRandomUserAgent();
     const viewport = getRandomViewport();
     
@@ -127,13 +127,6 @@ const createCloudflareBypassBrowser = async (useUnblockAPI = false) => {
             throw new Error('BROWSERLESS_API_TOKEN not found in environment variables');
         }
 
-        // If useUnblockAPI flag is set, use the Unblock API (last resort)
-        if (useUnblockAPI) {
-            console.log('🆘 Using Browserless Unblock API (last resort method)...');
-            return await createUnblockAPIBrowser(userAgent, viewport);
-        }
-
-        // Standard Browserless WebSocket connection (default method)
         // Retry logic for Browserless API calls
         let response;
         let retries = 5; // Increased from 3 to 5
@@ -182,11 +175,10 @@ const createCloudflareBypassBrowser = async (useUnblockAPI = false) => {
 
         console.log('Connecting to Browserless WebSocket endpoint...');
         
-        // Connect to the Browserless WebSocket endpoint with increased timeout
+        // Connect to the Browserless WebSocket endpoint
         const browser = await puppeteer.connect({
             browserWSEndpoint: response.data.browserWSEndpoint,
-            defaultViewport: null,
-            protocolTimeout: 180000 // 3 minutes timeout for protocol operations
+            defaultViewport: null
         });
 
         const page = await browser.newPage();
@@ -425,266 +417,268 @@ const addHumanLikeBehavior = async (page) => {
     });
 };
 
-// Function to get cookies from Browserless page with timeout handling
-const getCookies = async (page, retries = 3) => {
-    for (let i = 0; i < retries; i++) {
+// Function to get cookies from Browserless page
+const getCookies = async (page) => {
+    try {
+        return await page.cookies();
+    } catch (error) {
+        console.error('Failed to get cookies:', error);
+        return [];
+    }
+};
+
+// Global persistent browser session manager
+class PersistentBrowserSession {
+    constructor() {
+        this.browser = null;
+        this.page = null;
+        this.isLoggedIn = false;
+        this.loginCookies = [];
+        this.sessionStartTime = null;
+    }
+
+    // Create or reuse persistent browser session
+    async getBrowser() {
+        if (this.browser && !this.browser.isConnected()) {
+            console.log('🔄 Browser disconnected, creating new session...');
+            this.browser = null;
+            this.page = null;
+            this.isLoggedIn = false;
+        }
+
+        if (!this.browser) {
+            await this.createPersistentBrowser();
+        }
+
+        return { browser: this.browser, page: this.page };
+    }
+
+    // Create persistent browser session
+    async createPersistentBrowser() {
+        const userAgent = getRandomUserAgent();
+        const viewport = getRandomViewport();
+
+        console.log(`🚀 Creating persistent browser session`);
+        console.log(`Using user agent: ${userAgent}`);
+        console.log(`Using viewport: ${viewport.width}x${viewport.height}`);
+
         try {
-            // Set a reasonable timeout for cookie operations
-            const cookies = await Promise.race([
-                page.cookies(),
-                new Promise((_, reject) => 
-                    setTimeout(() => reject(new Error('Cookie operation timeout')), 30000)
-                )
-            ]);
-            return cookies;
+            // Try regular browser first, fallback to Browserless if needed
+            let browserResult;
+
+            try {
+                console.log('🔍 Attempting regular Puppeteer browser...');
+                browserResult = await createRegularBrowser();
+                console.log('✅ Regular browser created successfully');
+            } catch (regularError) {
+                console.log(`❌ Regular browser failed: ${regularError.message}`);
+                console.log('🔄 Falling back to Browserless...');
+                browserResult = await createCloudflareBypassBrowser();
+            }
+
+            this.browser = browserResult.browser;
+            this.page = browserResult.page;
+            this.sessionStartTime = new Date();
+
+            // Add human-like behavior
+            await addHumanLikeBehavior(this.page);
+
+            console.log('✅ Persistent browser session created');
+            return { browser: this.browser, page: this.page };
+
         } catch (error) {
-            console.warn(`Cookie retrieval attempt ${i + 1}/${retries} failed:`, error.message);
-            if (i === retries - 1) {
-                console.error('All cookie retrieval attempts failed:', error);
-                return [];
-            }
-            // Wait before retrying
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            console.error('❌ Failed to create persistent browser:', error);
+            throw error;
         }
     }
-    return [];
-};
 
-// Persistent cookie management for Browserless sessions
-const COOKIE_FILE_PATH = path.join(__dirname, 'session_cookies.json');
-
-// Save cookies to disk
-const saveCookiesToDisk = async (cookies) => {
-    try {
-        // Only save valid cookies with required properties
-        const validCookies = cookies.filter(cookie => 
-            cookie.name && cookie.value && cookie.domain && 
-            cookie.domain.includes('realgpl.com')
-        );
-        
-        const cookieData = {
-            timestamp: Date.now(),
-            cookies: validCookies
-        };
-        
-        await fs.promises.writeFile(COOKIE_FILE_PATH, JSON.stringify(cookieData, null, 2));
-        console.log(`💾 Saved ${validCookies.length} cookies to disk`);
-        return validCookies;
-    } catch (error) {
-        console.error('Failed to save cookies to disk:', error);
-        return [];
-    }
-};
-
-// Load cookies from disk
-const loadCookiesFromDisk = async () => {
-    try {
-        if (!fs.existsSync(COOKIE_FILE_PATH)) {
-            console.log('🍪 No saved cookies found');
-            return [];
-        }
-        
-        const cookieData = JSON.parse(await fs.promises.readFile(COOKIE_FILE_PATH, 'utf8'));
-        const cookieAge = Date.now() - cookieData.timestamp;
-        const maxAge = 24 * 60 * 60 * 1000; // 24 hours
-        
-        if (cookieAge > maxAge) {
-            console.log('🍪 Saved cookies are too old, ignoring');
-            return [];
-        }
-        
-        console.log(`🍪 Loaded ${cookieData.cookies.length} cookies from disk (age: ${Math.round(cookieAge / 1000 / 60)} mins)`);
-        return cookieData.cookies;
-    } catch (error) {
-        console.error('Failed to load cookies from disk:', error);
-        return [];
-    }
-};
-
-// Apply cookies to page with better error handling and timeouts
-const applyCookiesToPage = async (page, cookies, retries = 3) => {
-    if (!cookies || cookies.length === 0) {
-        console.log('🍪 No cookies to apply');
-        return false;
-    }
-    
-    for (let i = 0; i < retries; i++) {
-        try {
-            // Clear existing cookies first with timeout
-            const currentCookies = await Promise.race([
-                page.cookies(),
-                new Promise((_, reject) => 
-                    setTimeout(() => reject(new Error('Get cookies timeout')), 15000)
-                )
-            ]);
-            
-            if (currentCookies.length > 0) {
-                await Promise.race([
-                    page.deleteCookie(...currentCookies),
-                    new Promise((_, reject) => 
-                        setTimeout(() => reject(new Error('Delete cookies timeout')), 15000)
-                    )
-                ]);
-            }
-            
-            // Apply saved cookies with timeout
-            await Promise.race([
-                page.setCookie(...cookies),
-                new Promise((_, reject) => 
-                    setTimeout(() => reject(new Error('Set cookies timeout')), 15000)
-                )
-            ]);
-            
-            console.log(`✅ Applied ${cookies.length} cookies to page`);
+    // Perform login and maintain session
+    async ensureLogin() {
+        if (this.isLoggedIn && await this.verifyLogin()) {
+            console.log('✅ Already logged in and session valid');
             return true;
-            
+        }
+
+        console.log('🔐 Performing login...');
+        const username = process.env.USERNAME;
+        const password = process.env.PASSWORD;
+
+        if (!username || !password) {
+            throw new Error('USERNAME and PASSWORD environment variables are required');
+        }
+
+        // Navigate to login page
+        await navigateWithRetry(this.page, 'https://www.realgpl.com/my-account/');
+
+        // Handle consent if present
+        try {
+            const consentExists = await waitForElementReady(this.page, '.fc-button-label', 5000);
+            if (consentExists) {
+                await this.page.click('.fc-button-label');
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                console.log('✅ Consent block accepted');
+            }
         } catch (error) {
-            console.warn(`Cookie application attempt ${i + 1}/${retries} failed:`, error.message);
-            if (i === retries - 1) {
-                console.error('All cookie application attempts failed:', error.message);
+            console.log('ℹ️ No consent block found');
+        }
+
+        // Wait for login form
+        await waitForElementReady(this.page, '#username');
+        await waitForElementReady(this.page, '#password');
+
+        console.log('📝 Entering credentials...');
+        await this.page.type('#username', username.toString());
+        await new Promise(resolve => setTimeout(resolve, randomDelay(500, 1000)));
+        await this.page.type('#password', password.toString());
+        await new Promise(resolve => setTimeout(resolve, randomDelay(500, 1000)));
+
+        // Submit login
+        await waitForElementReady(this.page, '.button.woocommerce-button.woocommerce-form-login__submit');
+        await this.page.click('.button.woocommerce-button.woocommerce-form-login__submit');
+
+        // Wait for login success
+        try {
+            await Promise.race([
+                this.page.waitForNavigation({ timeout: 60000, waitUntil: 'domcontentloaded' }),
+                this.page.waitForSelector('.woocommerce-MyAccount-navigation', { timeout: 60000 }),
+                this.page.waitForSelector('.woocommerce-account', { timeout: 60000 })
+            ]);
+            console.log('✅ Successfully logged in');
+        } catch (error) {
+            console.log('⚠️ Login wait timed out, performing final verification...');
+            await new Promise(resolve => setTimeout(resolve, randomDelay(2000, 3000)));
+
+            const loginStatus = await this.page.evaluate(() => {
+                const hasAccountNav = document.querySelector('.woocommerce-MyAccount-navigation') !== null;
+                const hasAccountContent = document.querySelector('.woocommerce-account') !== null;
+                const noLoginForm = document.querySelector('#username') === null;
+                const hasLogoutLink = document.querySelector('a[href*="customer-logout"]') !== null;
+                const currentUrl = window.location.href;
+
+                return {
+                    hasAccountNav,
+                    hasAccountContent,
+                    noLoginForm,
+                    hasLogoutLink,
+                    currentUrl,
+                    isLoggedIn: hasAccountNav || hasAccountContent || (noLoginForm && hasLogoutLink)
+                };
+            });
+
+            if (!loginStatus.isLoggedIn) {
+                throw new Error(`Login verification failed: ${error.message}`);
+            }
+
+            console.log('✅ Login verified successfully (URL: ' + loginStatus.currentUrl + ')');
+        }
+
+        // Save login cookies
+        this.loginCookies = await this.page.cookies('https://www.realgpl.com/');
+        this.isLoggedIn = true;
+        console.log(`💾 Saved ${this.loginCookies.length} session cookies`);
+
+        return true;
+    }
+
+    // Verify if still logged in
+    async verifyLogin() {
+        if (!this.page || !this.isLoggedIn) {
+            return false;
+        }
+
+        try {
+            const hasWpLoginCookie = (await this.page.cookies('https://www.realgpl.com/'))
+                .some(c => c.name && c.name.startsWith('wordpress_logged_in'));
+
+            const loginStatus = await this.page.evaluate((hasCookie) => {
+                const hasLoginForm = document.querySelector('form.login, form.woocommerce-form-login, #username') !== null;
+                const hasLogoutLink = document.querySelector('a[href*="customer-logout"]') !== null;
+                const hasAccountMenu = document.querySelector('.account-menu, .my-account-menu, .user-menu') !== null;
+
+                if (hasCookie) return { isLoggedIn: true, reason: 'WordPress cookie present' };
+                if (hasLoginForm && !hasLogoutLink) return { isLoggedIn: false, reason: 'Login form present' };
+                if (hasLogoutLink || hasAccountMenu) return { isLoggedIn: true, reason: 'Found logged-in indicators' };
+
+                return { isLoggedIn: true, reason: 'No clear indicators, assuming logged in' };
+            }, hasWpLoginCookie);
+
+            return loginStatus.isLoggedIn;
+        } catch (error) {
+            console.log(`Login verification error: ${error.message}`);
+            return false;
+        }
+    }
+
+    // Restore session cookies
+    async restoreSession() {
+        if (this.loginCookies.length === 0) {
+            console.log('⚠️ No saved cookies to restore');
+            return false;
+        }
+
+        try {
+            const validCookies = this.loginCookies.filter(cookie =>
+                cookie.domain && cookie.domain.includes('realgpl.com')
+            );
+
+            if (validCookies.length > 0) {
+                console.log(`🔄 Restoring ${validCookies.length} session cookies`);
+                await this.page.setCookie(...validCookies);
+                this.isLoggedIn = await this.verifyLogin();
+                return this.isLoggedIn;
+            } else {
+                console.log('⚠️ No valid cookies to restore');
                 return false;
             }
-            // Wait before retrying
-            await new Promise(resolve => setTimeout(resolve, 2000));
+        } catch (error) {
+            console.log(`Cookie restoration error: ${error.message}`);
+            return false;
         }
     }
-    
-    return false;
-};
 
-// Create browser using Browserless Unblock API (last resort method)
-const createUnblockAPIBrowser = async (userAgent, viewport) => {
-    const axios = require('axios');
-    const targetUrl = 'https://www.realgpl.com/changelog/';
-    const token = process.env.BROWSERLESS_API_TOKEN;
-    
-    console.log('📍 Target URL for unblocking:', targetUrl);
-    
-    const unblockURL = 'https://production-sfo.browserless.io/chromium/unblock';
-    
-    const options = {
-        url: targetUrl,
-        browserWSEndpoint: true,  // Get endpoint for continued automation
-        cookies: true,             // Get cookies
-        ttl: 60000,               // Keep alive for 60 seconds
-    };
-    
-    try {
-        console.log('🔓 Calling Unblock API to bypass anti-bot protection...');
-        const response = await axios.post(unblockURL, options, {
-            params: { token },
-            headers: { 'Content-Type': 'application/json' },
-            timeout: 120000 // 2 minutes
-        });
-        
-        if (!response.data.browserWSEndpoint) {
-            throw new Error('No browserWSEndpoint in Unblock API response');
+    // Navigate with session preservation
+    async navigateWithSession(url) {
+        console.log(`🧭 Navigating to: ${url}`);
+
+        // Ensure we're logged in before navigation
+        if (!await this.verifyLogin()) {
+            console.log('🔄 Session expired, restoring login...');
+            if (!await this.restoreSession()) {
+                await this.ensureLogin();
+            }
         }
-        
-        const browserWSEndpoint = response.data.browserWSEndpoint;
-        console.log('✅ Unblock API successful! Got browser endpoint');
-        console.log('📍 Reconnection endpoint:', browserWSEndpoint.substring(0, 50) + '...');
-        
-        // Connect to the pre-unblocked browser
-        const browser = await puppeteer.connect({
-            browserWSEndpoint: `${browserWSEndpoint}?token=${token}`,
-            defaultViewport: null,
-            protocolTimeout: 180000
-        });
-        
-        console.log('🔗 Connected to unblocked browser');
-        
-        // Find the page that was already loaded by the Unblock API
-        const pages = await browser.pages();
-        let page = pages.find(p => p.url().includes('realgpl.com'));
-        
-        if (!page) {
-            console.log('📄 Creating new page in unblocked browser...');
-            page = await browser.newPage();
-        } else {
-            console.log('✅ Found pre-loaded page from Unblock API');
-        }
-        
-        // Apply our custom settings
-        await page.setViewport(viewport);
-        await page.setUserAgent(userAgent);
-        
-        console.log('✅ Unblock API browser ready');
-        
-        return { browser, page };
-        
-    } catch (error) {
-        console.error('❌ Unblock API failed:', error.message);
-        throw new Error(`Unblock API failed: ${error.message}`);
+
+        await navigateWithRetry(this.page, url);
+        return true;
     }
-};
 
-// Function to close Browserless browser
+    // Close persistent browser session
+    async close() {
+        if (this.browser) {
+            try {
+                await this.browser.close();
+                console.log('🔒 Persistent browser session closed');
+            } catch (error) {
+                console.error('Failed to close persistent browser:', error);
+            }
+        }
+        this.browser = null;
+        this.page = null;
+        this.isLoggedIn = false;
+        this.loginCookies = [];
+    }
+}
+
+// Global persistent session instance
+const persistentSession = new PersistentBrowserSession();
+
+// Function to close Browserless browser (legacy compatibility)
 const closeBrowser = async (browser) => {
     try {
         await browser.close();
     } catch (error) {
         console.error('Failed to close browser:', error);
     }
-};
-
-// Session health management
-let currentBrowserSession = null;
-let sessionCreateTime = null;
-const MAX_SESSION_AGE = 30 * 60 * 1000; // 30 minutes
-
-// Check if current browser session is still healthy
-const isSessionHealthy = async () => {
-    if (!currentBrowserSession || !sessionCreateTime) {
-        return false;
-    }
-    
-    // Check session age
-    const sessionAge = Date.now() - sessionCreateTime;
-    if (sessionAge > MAX_SESSION_AGE) {
-        console.log('🕒 Browser session too old, needs refresh');
-        return false;
-    }
-    
-    try {
-        // Try to get browser version - if this fails, session is dead
-        const browser = currentBrowserSession.browser;
-        await browser.version();
-        console.log(`✅ Browser session healthy (age: ${Math.round(sessionAge / 1000 / 60)} mins)`);
-        return true;
-    } catch (error) {
-        console.log(`❌ Browser session unhealthy: ${error.message}`);
-        currentBrowserSession = null;
-        sessionCreateTime = null;
-        return false;
-    }
-};
-
-// Get or create a browser session with session reuse
-const getBrowserSession = async () => {
-    // Try to reuse existing session if healthy
-    if (currentBrowserSession && await isSessionHealthy()) {
-        console.log('♻️  Reusing existing browser session');
-        return currentBrowserSession;
-    }
-    
-    // Clean up old session
-    if (currentBrowserSession) {
-        try {
-            await closeBrowser(currentBrowserSession.browser);
-        } catch (error) {
-            console.log('Session cleanup warning:', error.message);
-        }
-        currentBrowserSession = null;
-    }
-    
-    // Create new session
-    console.log('🆕 Creating new browser session...');
-    const browserResult = await createCloudflareBypassBrowser();
-    currentBrowserSession = browserResult;
-    sessionCreateTime = Date.now();
-    
-    return browserResult;
 };
 
 module.exports = {
@@ -699,9 +693,6 @@ module.exports = {
     randomDelay,
     getRandomUserAgent,
     getRandomViewport,
-    saveCookiesToDisk,
-    loadCookiesFromDisk,
-    applyCookiesToPage,
-    getBrowserSession,
-    isSessionHealthy
+    PersistentBrowserSession,
+    persistentSession
 };

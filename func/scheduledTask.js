@@ -6,7 +6,7 @@ const {
     waitForElementReady,
     getCookies,
     closeBrowser,
-    randomDelay
+    randomDelay 
 } = require('./cloudflareBypass');
 const JSONdb = require('simple-json-db');
 const fs = require('fs');
@@ -66,32 +66,12 @@ const scheduledTask = async () => {
         page.setDefaultTimeout(0);
 
         try {
-            // Go directly to changelog page
-            console.log('Going directly to changelog page...');
-            await navigateWithRetry(page, 'https://www.realgpl.com/changelog/?99936_results_per_page=500');
+            // Go to the login page
+            console.log('Going to the login page...');
+            await navigateWithRetry(page, 'https://www.realgpl.com/my-account/');
 
-            // Clear all cookies for a clean slate before login
-            console.log('🧹 Clearing all cookies for fresh login...');
             try {
-                const cookies = await page.cookies();
-                if (cookies.length > 0) {
-                    await page.deleteCookie(...cookies);
-                    console.log(`✅ Cleared ${cookies.length} cookies`);
-                    
-                    // Reload the page so it can detect the missing cookies and show login form
-                    console.log('🔄 Reloading page to trigger login form...');
-                    await page.reload({ waitUntil: 'domcontentloaded' });
-                    await delay(randomDelay(2000, 3000));
-                    console.log('✅ Page reloaded');
-                } else {
-                    console.log('No cookies to clear');
-                }
-            } catch (error) {
-                console.log(`⚠️  Cookie clearing warning: ${error.message}`);
-            }
-
-            // Handle consent block if it appears (after reload)
-            try {
+                // Wait for consent block to be ready before clicking
                 const consentExists = await waitForElementReady(page, '.fc-button-label', 5000);
                 if (consentExists) {
                     await page.click('.fc-button-label');
@@ -102,57 +82,77 @@ const scheduledTask = async () => {
                 console.log('No Consent block')
             }
 
-            // Check if we need to login on the changelog page
-            console.log('🔍 Checking if login is needed...');
-            const needsLogin = await page.evaluate(() => {
-                const loginForm = document.querySelector('form.login, form.woocommerce-form-login, #username');
-                const hasTable = document.querySelector('table#awcpt-product-table-99936') !== null;
-                return loginForm !== null || !hasTable;
-            });
+            var username =  process.env.USERNAME;
+            var password = process.env.PASSWORD;
             
-            if (needsLogin) {
-                console.log('🔐 Login required - logging in on changelog page...');
+            // Wait for login form to be ready
+            await waitForElementReady(page, '#username');
+            await waitForElementReady(page, '#password');
+            
+            // Fill in the login credentials
+            console.log('Typing username...');
+            await page.type('#username',username.toString());
+
+            console.log('Typing password...');
+            await page.type('#password',password.toString());
+            
+            // Wait for login button to be ready before clicking
+            await waitForElementReady(page, '.button.woocommerce-button.woocommerce-form-login__submit');
+            
+            // Click the login button and wait for navigation
+            console.log('Clicking the login button...');
+            
+            // Click the login button and wait for either navigation or DOM changes
+            await page.click('.button.woocommerce-button.woocommerce-form-login__submit');
+            
+            // Wait for login success indicators with a race condition
+            try {
+                await Promise.race([
+                    // Option 1: Wait for navigation
+                    page.waitForNavigation({ timeout: 60000, waitUntil: ['load', 'domcontentloaded'] }),
+                    // Option 2: Wait for account navigation menu to appear (indicates successful login)
+                    page.waitForSelector('.woocommerce-MyAccount-navigation', { timeout: 60000 }),
+                    // Option 3: Wait for account content
+                    page.waitForSelector('.woocommerce-account', { timeout: 60000 })
+                ]);
+                console.log('✅ Successfully logged in');
+            } catch (error) {
+                // Final verification: check if we're logged in by examining the page
+                console.log('⚠️  Login wait timed out, performing final verification...');
+                await delay(randomDelay(2000, 3000)); // Give page time to settle
                 
-                const username = process.env.USERNAME;
-                const password = process.env.PASSWORD;
+                const loginStatus = await page.evaluate(() => {
+                    const hasAccountNav = document.querySelector('.woocommerce-MyAccount-navigation') !== null;
+                    const hasAccountContent = document.querySelector('.woocommerce-account') !== null;
+                    const noLoginForm = document.querySelector('#username') === null;
+                    const hasLogoutLink = document.querySelector('a[href*="customer-logout"]') !== null;
+                    const currentUrl = window.location.href;
+                    
+                    return {
+                        hasAccountNav,
+                        hasAccountContent,
+                        noLoginForm,
+                        hasLogoutLink,
+                        currentUrl,
+                        isLoggedIn: hasAccountNav || hasAccountContent || (noLoginForm && hasLogoutLink)
+                    };
+                });
                 
-                if (!username || !password) {
-                    throw new Error('USERNAME and PASSWORD environment variables are required');
+                console.log('Login status check:', loginStatus);
+                
+                if (!loginStatus.isLoggedIn) {
+                    throw new Error(`Login verification failed: ${error.message}`);
                 }
                 
-                // Wait for and fill login form
-                await waitForElementReady(page, '#username');
-                await waitForElementReady(page, '#password');
-                
-                console.log('Entering credentials...');
-                await page.type('#username', username.toString());
-                await delay(randomDelay(500, 1000));
-                await page.type('#password', password.toString());
-                await delay(randomDelay(500, 1000));
-                
-                // Submit login form
-                const loginButton = await page.$('.button.woocommerce-button.woocommerce-form-login__submit, input[type="submit"][name="login"]');
-                if (loginButton) {
-                    console.log('Submitting login form...');
-                    await loginButton.click();
-                    
-                    // Wait for page to reload/update after login
-                    await delay(randomDelay(3000, 5000));
-                    console.log('✅ Login submitted, checking results...');
-                    
-                    // Verify login was successful by checking if table is now visible
-                    const tableVisible = await waitForElementReady(page, 'table#awcpt-product-table-99936', 30000);
-                    if (tableVisible) {
-                        console.log('✅ Login successful - table is now visible');
-                    } else {
-                        throw new Error('Login may have failed - table still not visible');
-                    }
-                } else {
-                    throw new Error('Login button not found on changelog page');
-                }
-            } else {
-                console.log('✅ Already logged in - table is visible');
+                console.log('✅ Login verified successfully (URL: ' + loginStatus.currentUrl + ')');
             }
+            
+            // Additional wait to ensure login is complete
+            await delay(randomDelay(2000, 4000));
+
+            // Go to the changelog page
+            console.log('Going to the changelog page...');
+            await navigateWithRetry(page, 'https://www.realgpl.com/changelog/?99936_results_per_page=500');
 
             // Wait for changelog table to be fully loaded
             await waitForElementReady(page, 'tr.awcpt-row', 30000);
