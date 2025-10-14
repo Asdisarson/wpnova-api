@@ -444,9 +444,6 @@ const getCookies = async (page, retries = 3) => {
 };
 
 // Persistent cookie management for Browserless sessions
-const fs = require('fs');
-const path = require('path');
-
 const COOKIE_FILE_PATH = path.join(__dirname, 'session_cookies.json');
 
 // Save cookies to disk
