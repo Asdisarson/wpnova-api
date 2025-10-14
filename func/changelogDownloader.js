@@ -1,15 +1,18 @@
 // Unified changelog downloader module
 const { 
-    createRegularBrowser,
-    createCloudflareBypassBrowser, 
     navigateWithRetry, 
     handleCloudflareChallenge, 
     addHumanLikeBehavior,
     waitForElementReady,
     getCookies,
-    closeBrowser,
     randomDelay
 } = require('./cloudflareBypass');
+const {
+    getOrCreateSession,
+    markSessionAsLoggedIn,
+    disconnectSession,
+    closeSession
+} = require('./sessionManager');
 const JSONdb = require('simple-json-db');
 const fs = require('fs');
 const path = require('path');
@@ -93,101 +96,94 @@ async function downloadFromChangelog(options = {}) {
             console.log('Continuing anyway...');
         }
         
-        // Try regular browser first, fallback to Browserless if needed
-        let browserResult;
-        let usedBrowserless = false;
+        // Get or create browser session (with reconnection support)
+        const sessionResult = await getOrCreateSession();
+        browser = sessionResult.browser;
+        const page = sessionResult.page;
+        const usedBrowserless = sessionResult.usedBrowserless;
+        const isNewSession = sessionResult.isNewSession;
+        const wasLoggedIn = sessionResult.isLoggedIn;
         
-        try {
-            console.log('🚀 Attempting with regular Puppeteer browser (no Browserless)...');
-            browserResult = await createRegularBrowser();
-            browser = browserResult.browser;
-            const page = browserResult.page;
-            
-            // Test if we can access the site (check for Cloudflare)
-            console.log('Testing website access...');
-            await page.goto('https://www.realgpl.com', { waitUntil: 'domcontentloaded', timeout: 15000 });
-            
-            // Check for Cloudflare challenge
-            const hasCloudflare = await page.evaluate(() => {
-                return document.title.includes('Just a moment') || 
-                       document.body.innerHTML.includes('Checking your browser') ||
-                       document.body.innerHTML.includes('cloudflare');
-            });
-            
-            if (hasCloudflare) {
-                console.log('⚠️  Cloudflare detected with regular browser, switching to Browserless...');
-                await closeBrowser(browser);
-                throw new Error('Cloudflare challenge detected');
-            }
-            
-            console.log('✅ Regular browser works! Proceeding without Browserless...');
-            
-        } catch (error) {
-            console.log(`❌ Regular browser failed: ${error.message}`);
-            console.log('🔄 Falling back to Browserless with Cloudflare bypass...');
-            
-            if (browser) {
-                await closeBrowser(browser);
-            }
-            
-            browserResult = await createCloudflareBypassBrowser();
-            browser = browserResult.browser;
-            usedBrowserless = true;
-        }
-        
-        const page = browserResult.page;
         console.log(`📊 Using: ${usedBrowserless ? 'Browserless' : 'Regular Puppeteer'}`);
+        console.log(`🔄 Session: ${isNewSession ? 'New' : 'Reused'} | Logged in: ${wasLoggedIn ? 'Yes' : 'No'}`);
         
         // Add human-like behavior
         await addHumanLikeBehavior(page);
         
-        // Go directly to changelog page
-        const changelogUrl = `https://www.realgpl.com/changelog/?99936_results_per_page=${resultsPerPage}`;
-        console.log(`📋 Going directly to changelog: ${changelogUrl}`);
-        await navigateWithRetry(page, changelogUrl);
-        
-        // Clear all cookies for a clean slate before login
-        console.log('🧹 Clearing all cookies for fresh login...');
-        try {
-            const cookies = await page.cookies();
-            if (cookies.length > 0) {
-                await page.deleteCookie(...cookies);
-                console.log(`✅ Cleared ${cookies.length} cookies`);
-                
-                // Reload the page so it can detect the missing cookies and show login form
-                console.log('🔄 Reloading page to trigger login form...');
-                await page.reload({ waitUntil: 'domcontentloaded' });
-                await delay(randomDelay(2000, 3000));
-                console.log('✅ Page reloaded');
+        // Skip login if we're reusing a logged-in session
+        if (wasLoggedIn && !isNewSession) {
+            console.log('✅ Reusing logged-in session - skipping login');
+            
+            // Just navigate to changelog
+            const changelogUrl = `https://www.realgpl.com/changelog/?99936_results_per_page=${resultsPerPage}`;
+            console.log(`📋 Navigating to changelog: ${changelogUrl}`);
+            await navigateWithRetry(page, changelogUrl);
+            
+            // Verify we're still logged in
+            await delay(randomDelay(2000, 3000));
+            const stillLoggedIn = await page.evaluate(() => {
+                const hasTable = document.querySelector('table#awcpt-product-table-99936') !== null;
+                const hasLoginForm = document.querySelector('form.login, form.woocommerce-form-login, #username') !== null;
+                return hasTable && !hasLoginForm;
+            });
+            
+            if (stillLoggedIn) {
+                console.log('✅ Session still valid and logged in');
             } else {
-                console.log('No cookies to clear');
+                console.log('⚠️  Session expired, will need to re-login');
+                wasLoggedIn = false; // Force login below
             }
-        } catch (error) {
-            console.log(`⚠️  Cookie clearing warning: ${error.message}`);
         }
         
-        // Handle consent block if it appears (after reload)
-        try {
-            const consentExists = await waitForElementReady(page, '.fc-button-label', 5000);
-            if (consentExists) {
-                await page.click('.fc-button-label');
-                await delay(1000);
-                console.log('Consent block accepted');
+        // Perform login if needed (new session or logged out)
+        if (!wasLoggedIn) {
+            // Go directly to changelog page
+            const changelogUrl = `https://www.realgpl.com/changelog/?99936_results_per_page=${resultsPerPage}`;
+            console.log(`📋 Going directly to changelog: ${changelogUrl}`);
+            await navigateWithRetry(page, changelogUrl);
+            
+            // Clear all cookies for a clean slate before login
+            console.log('🧹 Clearing all cookies for fresh login...');
+            try {
+                const cookies = await page.cookies();
+                if (cookies.length > 0) {
+                    await page.deleteCookie(...cookies);
+                    console.log(`✅ Cleared ${cookies.length} cookies`);
+                    
+                    // Reload the page so it can detect the missing cookies and show login form
+                    console.log('🔄 Reloading page to trigger login form...');
+                    await page.reload({ waitUntil: 'domcontentloaded' });
+                    await delay(randomDelay(2000, 3000));
+                    console.log('✅ Page reloaded');
+                } else {
+                    console.log('No cookies to clear');
+                }
+            } catch (error) {
+                console.log(`⚠️  Cookie clearing warning: ${error.message}`);
             }
-        } catch (error) {
-            console.log('No Consent block')
-        }
-        
-        // Check if we need to login on the changelog page
-        console.log('🔍 Checking if login is needed...');
-        const needsLogin = await page.evaluate(() => {
-            // Check if there's a login form visible
-            const loginForm = document.querySelector('form.login, form.woocommerce-form-login, #username');
-            const hasTable = document.querySelector('table#awcpt-product-table-99936') !== null;
-            return loginForm !== null || !hasTable;
-        });
-        
-        if (needsLogin) {
+            
+            // Handle consent block if it appears (after reload)
+            try {
+                const consentExists = await waitForElementReady(page, '.fc-button-label', 5000);
+                if (consentExists) {
+                    await page.click('.fc-button-label');
+                    await delay(1000);
+                    console.log('Consent block accepted');
+                }
+            } catch (error) {
+                console.log('No Consent block')
+            }
+            
+            // Check if we need to login on the changelog page
+            console.log('🔍 Checking if login is needed...');
+            const needsLogin = await page.evaluate(() => {
+                // Check if there's a login form visible
+                const loginForm = document.querySelector('form.login, form.woocommerce-form-login, #username');
+                const hasTable = document.querySelector('table#awcpt-product-table-99936') !== null;
+                return loginForm !== null || !hasTable;
+            });
+            
+            if (needsLogin) {
             console.log('🔐 Login required - logging in on changelog page...');
             
             const username = process.env.USERNAME;
@@ -221,6 +217,8 @@ async function downloadFromChangelog(options = {}) {
                 const tableVisible = await waitForElementReady(page, 'table#awcpt-product-table-99936', 30000);
                 if (tableVisible) {
                     console.log('✅ Login successful - table is now visible');
+                    // Mark session as logged in for future reuse
+                    markSessionAsLoggedIn();
                 } else {
                     throw new Error('Login may have failed - table still not visible');
                 }
@@ -229,6 +227,7 @@ async function downloadFromChangelog(options = {}) {
             }
         } else {
             console.log('✅ Already logged in - table is visible');
+        }
         }
         
         // Get cookies for download requests
@@ -387,7 +386,7 @@ async function downloadFromChangelog(options = {}) {
         
         if (data.length === 0) {
             console.log('⚠️  No products found for the specified date');
-            await closeBrowser(browser);
+            await disconnectSession();
             return { 
                 downloadedCount: 0, 
                 errorCount: 0, 
@@ -687,9 +686,9 @@ async function downloadFromChangelog(options = {}) {
             });
         }
         
-        // Close browser
-        await closeBrowser(browser);
-        console.log('🔒 Browser closed');
+        // Disconnect from browser session (keeping it alive for reconnection)
+        await disconnectSession();
+        console.log('🔌 Session disconnected (kept alive for reconnection)');
         
         return {
             downloadedCount: list.length,
@@ -701,7 +700,7 @@ async function downloadFromChangelog(options = {}) {
     } catch (error) {
         console.error('❌ Fatal error:', error.message);
         if (browser) {
-            await closeBrowser(browser);
+            await closeSession(); // Close completely on error
         }
         throw error;
     }

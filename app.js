@@ -108,4 +108,29 @@ app.use('/lastUpdate', async(req,res) => {
         return res.send(db.JSON());
 });
 
+// Graceful shutdown handlers for session cleanup
+const { closeSession } = require('./func/sessionManager');
+
+process.on('SIGTERM', async () => {
+    console.log('SIGTERM signal received: closing browser sessions...');
+    try {
+        await closeSession();
+        console.log('✅ Browser sessions closed successfully');
+    } catch (error) {
+        console.error('⚠️  Error closing browser sessions:', error.message);
+    }
+    process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+    console.log('\nSIGINT signal received: closing browser sessions...');
+    try {
+        await closeSession();
+        console.log('✅ Browser sessions closed successfully');
+    } catch (error) {
+        console.error('⚠️  Error closing browser sessions:', error.message);
+    }
+    process.exit(0);
+});
+
 module.exports = app;
