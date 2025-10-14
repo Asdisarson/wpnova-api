@@ -113,8 +113,8 @@ const createRegularBrowser = async () => {
     }
 };
 
-// Create Browserless browser instance with Cloudflare bypass
-const createCloudflareBypassBrowser = async () => {
+// Create Browserless browser instance with Cloudflare bypass (standard method)
+const createCloudflareBypassBrowser = async (useUnblockAPI = false) => {
     const userAgent = getRandomUserAgent();
     const viewport = getRandomViewport();
     
@@ -127,6 +127,13 @@ const createCloudflareBypassBrowser = async () => {
             throw new Error('BROWSERLESS_API_TOKEN not found in environment variables');
         }
 
+        // If useUnblockAPI flag is set, use the Unblock API (last resort)
+        if (useUnblockAPI) {
+            console.log('🆘 Using Browserless Unblock API (last resort method)...');
+            return await createUnblockAPIBrowser(userAgent, viewport);
+        }
+
+        // Standard Browserless WebSocket connection (default method)
         // Retry logic for Browserless API calls
         let response;
         let retries = 5; // Increased from 3 to 5
@@ -543,6 +550,73 @@ const applyCookiesToPage = async (page, cookies, retries = 3) => {
     }
     
     return false;
+};
+
+// Create browser using Browserless Unblock API (last resort method)
+const createUnblockAPIBrowser = async (userAgent, viewport) => {
+    const axios = require('axios');
+    const targetUrl = 'https://www.realgpl.com/changelog/';
+    const token = process.env.BROWSERLESS_API_TOKEN;
+    
+    console.log('📍 Target URL for unblocking:', targetUrl);
+    
+    const unblockURL = 'https://production-sfo.browserless.io/chromium/unblock';
+    
+    const options = {
+        url: targetUrl,
+        browserWSEndpoint: true,  // Get endpoint for continued automation
+        cookies: true,             // Get cookies
+        ttl: 60000,               // Keep alive for 60 seconds
+    };
+    
+    try {
+        console.log('🔓 Calling Unblock API to bypass anti-bot protection...');
+        const response = await axios.post(unblockURL, options, {
+            params: { token },
+            headers: { 'Content-Type': 'application/json' },
+            timeout: 120000 // 2 minutes
+        });
+        
+        if (!response.data.browserWSEndpoint) {
+            throw new Error('No browserWSEndpoint in Unblock API response');
+        }
+        
+        const browserWSEndpoint = response.data.browserWSEndpoint;
+        console.log('✅ Unblock API successful! Got browser endpoint');
+        console.log('📍 Reconnection endpoint:', browserWSEndpoint.substring(0, 50) + '...');
+        
+        // Connect to the pre-unblocked browser
+        const browser = await puppeteer.connect({
+            browserWSEndpoint: `${browserWSEndpoint}?token=${token}`,
+            defaultViewport: null,
+            protocolTimeout: 180000
+        });
+        
+        console.log('🔗 Connected to unblocked browser');
+        
+        // Find the page that was already loaded by the Unblock API
+        const pages = await browser.pages();
+        let page = pages.find(p => p.url().includes('realgpl.com'));
+        
+        if (!page) {
+            console.log('📄 Creating new page in unblocked browser...');
+            page = await browser.newPage();
+        } else {
+            console.log('✅ Found pre-loaded page from Unblock API');
+        }
+        
+        // Apply our custom settings
+        await page.setViewport(viewport);
+        await page.setUserAgent(userAgent);
+        
+        console.log('✅ Unblock API browser ready');
+        
+        return { browser, page };
+        
+    } catch (error) {
+        console.error('❌ Unblock API failed:', error.message);
+        throw new Error(`Unblock API failed: ${error.message}`);
+    }
 };
 
 // Function to close Browserless browser

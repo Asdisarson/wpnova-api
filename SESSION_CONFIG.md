@@ -2,6 +2,25 @@
 
 This application now supports persistent browser sessions using Browserless reconnection API. This significantly improves performance by reusing logged-in sessions across multiple requests.
 
+## Browser Creation Fallback Hierarchy
+
+The system now uses a progressive fallback approach for browser creation:
+
+1. **Regular Puppeteer** (fastest, cheapest)
+   - Uses local Chrome/Chromium installation
+   - No additional costs
+   - Fails if Cloudflare protection is detected
+
+2. **Browserless WebSocket** (when Cloudflare blocks regular browser)
+   - Standard Browserless cloud service
+   - Uses existing session management with `Browserless.reconnect`
+   - More expensive but handles Cloudflare challenges
+
+3. **Browserless Unblock API** (last resort)
+   - Pre-unblocked browser session specifically for anti-bot protection
+   - Most expensive but most reliable
+   - Only used when both methods above fail
+
 ## Environment Variables
 
 Add these to your `.env` file to configure session management:

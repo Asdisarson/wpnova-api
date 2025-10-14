@@ -106,11 +106,12 @@ async function getOrCreateSession(forceNew = false) {
         }
     }
     
-    // Create new session
+    // Create new session with progressive fallback
     console.log('🆕 Creating new browser session...');
     
     let browserResult;
     let usedBrowserless = false;
+    let usedUnblockAPI = false;
     
     try {
         console.log('🚀 Attempting with regular Puppeteer browser (no Browserless)...');
@@ -139,10 +140,33 @@ async function getOrCreateSession(forceNew = false) {
         
     } catch (error) {
         console.log(`❌ Regular browser failed: ${error.message}`);
-        console.log('🔄 Falling back to Browserless with Cloudflare bypass...');
+        console.log('🔄 Falling back to Browserless with standard WebSocket...');
         
-        browserResult = await createCloudflareBypassBrowser();
-        usedBrowserless = true;
+        try {
+            // Try standard Browserless WebSocket connection first
+            browserResult = await createCloudflareBypassBrowser(false); // false = don't use Unblock API yet
+            usedBrowserless = true;
+            console.log('✅ Standard Browserless WebSocket connected');
+            
+        } catch (browserlessError) {
+            console.log(`❌ Standard Browserless failed: ${browserlessError.message}`);
+            console.log('🆘 Falling back to Browserless Unblock API (last resort)...');
+            
+            try {
+                // Last resort: Use Unblock API
+                browserResult = await createCloudflareBypassBrowser(true); // true = use Unblock API
+                usedBrowserless = true;
+                usedUnblockAPI = true;
+                console.log('✅ Unblock API succeeded!');
+                
+            } catch (unblockError) {
+                console.error(`❌ All browser creation methods failed!`);
+                console.error(`Regular: ${error.message}`);
+                console.error(`Browserless: ${browserlessError.message}`);
+                console.error(`Unblock API: ${unblockError.message}`);
+                throw new Error('All browser creation methods exhausted');
+            }
+        }
     }
     
     const browser = browserResult.browser;
@@ -186,6 +210,7 @@ async function getOrCreateSession(forceNew = false) {
         page,
         isNewSession: true,
         usedBrowserless,
+        usedUnblockAPI,
         isLoggedIn: false
     };
 }
