@@ -29,8 +29,13 @@ const ensureDirectoryExistence = (filePath) => {
     if (fs.existsSync(dirname)) {
         return true;
     }
-    ensureDirectoryExistence(dirname);
-    fs.mkdirSync(dirname);
+    try {
+        fs.mkdirSync(dirname, { recursive: true });
+        return true;
+    } catch (error) {
+        console.error(`Error creating directory ${dirname}:`, error);
+        return false;
+    }
 }
 
 // Touch file function
@@ -65,7 +70,11 @@ async function downloadFromChangelog(options = {}) {
     const dbPath = path.join(__dirname, 'files.json');
     ensureDirectoryExistence(dbPath);
     const db = new JSONdb(dbPath);
-    db.JSON({});
+    // Only initialize if database is empty, don't clear existing data
+    const existingData = db.JSON();
+    if (!existingData || (Array.isArray(existingData) && existingData.length === 0)) {
+        db.JSON([]);
+    }
     
     let list = [];
     let errors = [];

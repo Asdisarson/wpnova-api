@@ -787,6 +787,94 @@ class PersistentBrowserSession {
                     ]);
                 } catch (_) {}
 
+                // Check if verification code form appeared for the first time
+                try {
+                    const hasVerificationForm = await this.page.evaluate(() => {
+                        // Look for verification code input fields
+                        const codeInputs = [
+                            'input[name*="code"]',
+                            'input[name*="verification"]',
+                            'input[name*="otp"]',
+                            'input[type="text"][placeholder*="code" i]',
+                            'input[type="text"][placeholder*="verification" i]',
+                            'input[id*="code"]',
+                            'input[id*="verification"]',
+                            '#verification_code',
+                            '#verification-code',
+                            '#code',
+                            '#otp'
+                        ];
+                        
+                        for (const selector of codeInputs) {
+                            try {
+                                const input = document.querySelector(selector);
+                                if (input && input.offsetParent !== null) {
+                                    return true;
+                                }
+                            } catch (_) {}
+                        }
+                        return false;
+                    });
+
+                    if (hasVerificationForm && attempt === 1) {
+                        console.log('🔍 Verification code form detected, attempting to submit immediately...');
+                        // Try to find and click submit button for verification form
+                        const verificationSubmitSelectors = [
+                            'button[type="submit"]',
+                            'input[type="submit"]',
+                            'button.submit',
+                            '.button[type="submit"]',
+                            'form button[type="submit"]'
+                        ];
+
+                        // Try CSS selectors first
+                        for (const selector of verificationSubmitSelectors) {
+                            try {
+                                const submitButton = await this.page.$(selector);
+                                if (submitButton) {
+                                    await hoverAndClickHuman(this.page, selector);
+                                    console.log('✅ Clicked verification submit button');
+                                    await new Promise(resolve => setTimeout(resolve, 2000));
+                                    break;
+                                }
+                            } catch (_) {}
+                        }
+
+                        // If no button found by selector, try finding by text content
+                        try {
+                            const buttonByText = await this.page.evaluate(() => {
+                                const buttons = Array.from(document.querySelectorAll('button, input[type="submit"]'));
+                                const submitTexts = ['submit', 'verify', 'continue', 'send', 'confirm'];
+                                for (const button of buttons) {
+                                    const text = (button.textContent || button.value || '').toLowerCase().trim();
+                                    if (submitTexts.some(st => text.includes(st))) {
+                                        return true;
+                                    }
+                                }
+                                return false;
+                            });
+
+                            if (buttonByText) {
+                                await this.page.evaluate(() => {
+                                    const buttons = Array.from(document.querySelectorAll('button, input[type="submit"]'));
+                                    const submitTexts = ['submit', 'verify', 'continue', 'send', 'confirm'];
+                                    for (const button of buttons) {
+                                        const text = (button.textContent || button.value || '').toLowerCase().trim();
+                                        if (submitTexts.some(st => text.includes(st))) {
+                                            button.click();
+                                            return;
+                                        }
+                                    }
+                                });
+                                console.log('✅ Clicked verification submit button by text');
+                                await new Promise(resolve => setTimeout(resolve, 2000));
+                            }
+                        } catch (_) {}
+                    }
+                } catch (e) {
+                    console.log('Error checking for verification form:', e.message);
+                }
+
                 // Poll for logged-in cookie and check page indicators
                 for (let t = 0; t < 5 && !success; t++) {
                     success = await this.verifyLogin();
@@ -871,6 +959,94 @@ class PersistentBrowserSession {
                         ]);
                     } catch (_) {}
 
+                    // Check if verification code form appeared for the first time
+                    try {
+                        const hasVerificationForm = await this.page.evaluate(() => {
+                            // Look for verification code input fields
+                            const codeInputs = [
+                                'input[name*="code"]',
+                                'input[name*="verification"]',
+                                'input[name*="otp"]',
+                                'input[type="text"][placeholder*="code" i]',
+                                'input[type="text"][placeholder*="verification" i]',
+                                'input[id*="code"]',
+                                'input[id*="verification"]',
+                                '#verification_code',
+                                '#verification-code',
+                                '#code',
+                                '#otp'
+                            ];
+                            
+                            for (const selector of codeInputs) {
+                                try {
+                                    const input = document.querySelector(selector);
+                                    if (input && input.offsetParent !== null) {
+                                        return true;
+                                    }
+                                } catch (_) {}
+                            }
+                            return false;
+                        });
+
+                        if (hasVerificationForm && attempt === 1) {
+                            console.log('🔍 Verification code form detected in fallback, attempting to submit immediately...');
+                            // Try to find and click submit button for verification form
+                            const verificationSubmitSelectors = [
+                                'button[type="submit"]',
+                                'input[type="submit"]',
+                                'button.submit',
+                                '.button[type="submit"]',
+                                'form button[type="submit"]'
+                            ];
+
+                            // Try CSS selectors first
+                            for (const selector of verificationSubmitSelectors) {
+                                try {
+                                    const submitButton = await this.page.$(selector);
+                                    if (submitButton) {
+                                        await hoverAndClickHuman(this.page, selector);
+                                        console.log('✅ Clicked verification submit button');
+                                        await new Promise(resolve => setTimeout(resolve, 2000));
+                                        break;
+                                    }
+                                } catch (_) {}
+                            }
+
+                            // If no button found by selector, try finding by text content
+                            try {
+                                const buttonByText = await this.page.evaluate(() => {
+                                    const buttons = Array.from(document.querySelectorAll('button, input[type="submit"]'));
+                                    const submitTexts = ['submit', 'verify', 'continue', 'send', 'confirm'];
+                                    for (const button of buttons) {
+                                        const text = (button.textContent || button.value || '').toLowerCase().trim();
+                                        if (submitTexts.some(st => text.includes(st))) {
+                                            return true;
+                                        }
+                                    }
+                                    return false;
+                                });
+
+                                if (buttonByText) {
+                                    await this.page.evaluate(() => {
+                                        const buttons = Array.from(document.querySelectorAll('button, input[type="submit"]'));
+                                        const submitTexts = ['submit', 'verify', 'continue', 'send', 'confirm'];
+                                        for (const button of buttons) {
+                                            const text = (button.textContent || button.value || '').toLowerCase().trim();
+                                            if (submitTexts.some(st => text.includes(st))) {
+                                                button.click();
+                                                return;
+                                            }
+                                        }
+                                    });
+                                    console.log('✅ Clicked verification submit button by text');
+                                    await new Promise(resolve => setTimeout(resolve, 2000));
+                                }
+                            } catch (_) {}
+                        }
+                    } catch (e) {
+                        console.log('Error checking for verification form in fallback:', e.message);
+                    }
+
                     for (let t = 0; t < 5 && !success; t++) {
                         success = await this.verifyLogin();
                         if (success) break;
@@ -938,10 +1114,22 @@ class PersistentBrowserSession {
 
         try {
             // Check cookie jar directly first (works even off-domain)
-            const jarCookies = [
-                ...(await this.page.cookies('https://www.realgpl.com/')),
-                ...(await this.page.cookies('https://realgpl.com/')).catch(() => []) || []
-            ];
+            let wwwCookies = [];
+            let apexCookies = [];
+            
+            try {
+                wwwCookies = await this.page.cookies('https://www.realgpl.com/');
+            } catch (e) {
+                console.log('Error getting www cookies:', e.message);
+            }
+            
+            try {
+                apexCookies = await this.page.cookies('https://realgpl.com/');
+            } catch (e) {
+                console.log('Error getting apex cookies:', e.message);
+            }
+            
+            const jarCookies = [...wwwCookies, ...apexCookies];
             const hasWpLoginCookie = jarCookies.some(c => c.name && c.name.startsWith('wordpress_logged_in'));
 
             const loginStatus = await this.page.evaluate((hasCookie) => {
