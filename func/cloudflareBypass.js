@@ -75,14 +75,18 @@ const createRegularBrowser = async () => {
     try {
         // Try to launch local/regular browser (no Browserless)
         const execPath = resolveExecutablePath();
+        // Default to headless in server/containers; allow override with PUPPETEER_HEADLESS=false for local debugging
+        const headlessSetting = (process.env.PUPPETEER_HEADLESS === 'false') ? false : 'new';
         const launchOptions = {
-            headless: false,
+            headless: headlessSetting,
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
                 '--disable-dev-shm-usage',
                 '--disable-accelerated-2d-canvas',
                 '--disable-gpu',
+                '--no-zygote',
+                '--single-process',
                 '--window-size=' + viewport.width + ',' + viewport.height,
             ]
         };
