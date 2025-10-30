@@ -576,6 +576,7 @@ class PersistentBrowserSession {
         this.isLoggedIn = false;
         this.loginCookies = [];
         this.sessionStartTime = null;
+        this.waitingForVerification = false;
     }
 
     // Create or reuse persistent browser session
@@ -800,13 +801,22 @@ class PersistentBrowserSession {
                             const err = document.querySelector('ul.woocommerce-error');
                             return err ? err.innerText.trim() : '';
                         });
-                        if (errorText) console.log('⚠️  WooCommerce error:', errorText);
-                    } catch (_) {}
+                        if (errorText) {
+                            console.log('⚠️  WooCommerce error:', errorText);
+                            if (/verification required/i.test(errorText)) {
+                                this.waitingForVerification = true;
+                                throw new Error('VERIFICATION_REQUIRED');
+                            }
+                        }
+                    } catch (e) {
+                        if (e && e.message === 'VERIFICATION_REQUIRED') throw e;
+                    }
                     console.log(`Login not confirmed after attempt ${attempt}`);
                     await new Promise(resolve => setTimeout(resolve, randomDelay(1200, 2000)));
                 }
             } catch (e) {
                 console.log(`Attempt ${attempt} error: ${e.message}`);
+                if (e && e.message === 'VERIFICATION_REQUIRED') throw e;
             }
         }
 
@@ -866,12 +876,32 @@ class PersistentBrowserSession {
                         if (success) break;
                         await new Promise(resolve => setTimeout(resolve, 1000));
                     }
+                    // Check for verification-required error on this page as well
+                    try {
+                        const errorText = await this.page.evaluate(() => {
+                            const err = document.querySelector('ul.woocommerce-error');
+                            return err ? err.innerText.trim() : '';
+                        });
+                        if (errorText) {
+                            console.log('⚠️  WooCommerce error:', errorText);
+                            if (/verification required/i.test(errorText)) {
+                                this.waitingForVerification = true;
+                                throw new Error('VERIFICATION_REQUIRED');
+                            }
+                        }
+                    } catch (e) {
+                        if (e && e.message === 'VERIFICATION_REQUIRED') throw e;
+                    }
                 }
             } catch (e) {
                 console.log(`My-account fallback error: ${e.message}`);
+                if (e && e.message === 'VERIFICATION_REQUIRED') {
+                    // Stop further login attempts and propagate
+                    throw e;
+                }
             }
 
-            if (!success) {
+            if (!success && !this.waitingForVerification) {
                 throw new Error('Login failed after sidebar and my-account fallback attempts');
             }
         }
@@ -1034,6 +1064,7 @@ const processVerificationLink = async (verificationUrl) => {
     if (finalStatus) {
         persistentSession.isLoggedIn = true;
         persistentSession.loginCookies = await page.cookies('https://www.realgpl.com/').catch(() => []);
+        persistentSession.waitingForVerification = false;
         console.log('✅ Verification link processed. Session is now logged in.');
         return true;
     }
