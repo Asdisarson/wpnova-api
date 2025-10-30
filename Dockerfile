@@ -18,33 +18,26 @@ RUN apt-get update \
     &&  npm install -g npm@10.8.1
 
 
-# Set up the application directory and permissions
-RUN mkdir -p /home/node/app
 WORKDIR /home/node/app
 
+# Install only production dependencies first (align with DO sample layering)
+COPY package*.json ./
+RUN npm ci --omit=dev || npm install --omit=dev
 
-# Clone repository with GitHub credentials and set permissions
-RUN git clone -b old https://${GITHUB_USERNAME}:${GITHUB_PASSWORD}@github.com/Asdisarson/wpnova-api.git . \
-    && chown -R node:node /home/node/app
+# Copy the rest of the app
+COPY . .
 
-# Install dependencies and configure environment as root
-RUN npm init -y && \
-    npm i puppeteer@latest
-
-# Ensure Puppeteer's cache directory exists and has correct permissions
-RUN mkdir -p /home/node/.cache \
-    && chown -R node:node /home/node/app /home/node/app/node_modules /home/node/.cache
-
-# Set user for running the application
+# Ensure ownership for node user
+RUN mkdir -p /home/node/.cache && chown -R node:node /home/node/app /home/node/.cache
 USER node
 
 # Configure Puppeteer to use installed Chrome
 ENV PUPPETEER_EXECUTABLE_PATH="/usr/bin/google-chrome-stable"
 
-# Set environment variables for application credentials
-ENV USERNAME=${USERNAME}
-ENV PASSWORD=${PASSWORD}
+ENV PORT=8080
+
+EXPOSE 8080
 
 # Default command to start the application
-CMD ["node", "bin/www"]
+CMD ["npm", "start"]
 

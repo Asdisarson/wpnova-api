@@ -1,7 +1,6 @@
 const { 
-    createCloudflareBypassBrowser, 
+    createRegularBrowser, 
     navigateWithRetry, 
-    handleCloudflareChallenge, 
     addHumanLikeBehavior, 
     waitForElementReady,
     getCookies,
@@ -363,7 +362,7 @@ const scheduledTask = async (date = new Date()) => {
 
         // Launch Puppeteer browser with Cloudflare bypass
         console.log('Launching Puppeteer browser with Cloudflare bypass...');
-        const { browser, page } = await createCloudflareBypassBrowser();
+        const { browser, page } = await createRegularBrowser();
         
         // Add human-like behavior
         await addHumanLikeBehavior(page);
@@ -1192,7 +1191,7 @@ const downloadAllFiles = async (date = new Date()) => {
         
         // Launch Puppeteer browser with Cloudflare bypass
         console.log('Launching Puppeteer browser with Cloudflare bypass...');
-        const { browser, page } = await createCloudflareBypassBrowser();
+        const { browser, page } = await createRegularBrowser();
         
         // Add human-like behavior
         await addHumanLikeBehavior(page);

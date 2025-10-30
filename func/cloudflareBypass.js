@@ -65,8 +65,9 @@ const createRegularBrowser = async () => {
     try {
         // Try to launch local/regular browser (no Browserless)
         const browser = await puppeteer.launch({
-            headless: true,
-            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
+            headless: false,
+            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || 
+                (process.platform === 'darwin' ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : '/usr/bin/google-chrome-stable'),
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
@@ -91,8 +92,7 @@ const createRegularBrowser = async () => {
             'Accept-Language': 'en-US,en;q=0.9',
             'Accept-Encoding': 'gzip, deflate, br',
             'DNT': '1',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
+            'Connection': 'keep-alive'
         });
 
         // Override navigator properties
@@ -196,7 +196,6 @@ const createCloudflareBypassBrowser = async () => {
             'Accept-Encoding': 'gzip, deflate, br',
             'DNT': '1',
             'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
             'Sec-Fetch-Dest': 'document',
             'Sec-Fetch-Mode': 'navigate',
             'Sec-Fetch-Site': 'none',
@@ -320,8 +319,7 @@ const navigateWithRetry = async (page, url, maxRetries = 3) => {
                 timeout: 60000 
             });
             
-            // Handle Cloudflare challenge
-            await handleCloudflareChallenge(page);
+            // Cloudflare handling disabled per requirement to avoid Cloudflare-specific flows
             
             // Additional wait to ensure page is fully loaded and JavaScript has executed
             console.log('Waiting for page to fully load...');
@@ -417,6 +415,134 @@ const addHumanLikeBehavior = async (page) => {
     });
 };
 
+// Human-like typing into an input selector
+const typeLikeHuman = async (page, selector, text) => {
+    await waitForElementReady(page, selector);
+    try {
+        // Move mouse toward the element and click to focus
+        const element = await page.$(selector);
+        if (element) {
+            const box = await element.boundingBox();
+            if (box) {
+                const startX = Math.random() * box.width + box.x;
+                const startY = Math.random() * box.height + box.y;
+                await page.mouse.move(startX, startY, { steps: 12 + Math.floor(Math.random() * 8) });
+            }
+            await element.click({ delay: 30 });
+        }
+    } catch (_) {}
+
+    // Clear existing value using DOM for reliability
+    try {
+        await page.$eval(selector, (el) => { el.focus(); el.value = ''; });
+    } catch (_) {}
+
+    // Type one character at a time with random delays and occasional pauses/corrections
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        await page.type(selector, ch, { delay: 40 + Math.floor(Math.random() * 90) });
+        if (Math.random() < 0.12) {
+            await new Promise(r => setTimeout(r, 150 + Math.floor(Math.random() * 250)));
+        }
+        if (Math.random() < 0.06) {
+            // Simulate a minor correction
+            await page.keyboard.press('Backspace');
+            await new Promise(r => setTimeout(r, 80 + Math.floor(Math.random() * 140)));
+            await page.type(selector, ch, { delay: 40 + Math.floor(Math.random() * 90) });
+        }
+    }
+
+    // Brief pause and blur
+    await new Promise(r => setTimeout(r, 150 + Math.floor(Math.random() * 250)));
+    try { await page.$eval(selector, (el) => el.blur && el.blur()); } catch (_) {}
+};
+
+// Human-like hover then click
+const hoverAndClickHuman = async (page, selector) => {
+    await waitForElementReady(page, selector);
+    try {
+        const el = await page.$(selector);
+        if (el) {
+            await page.$eval(selector, (btn) => btn.scrollIntoView({ behavior: 'instant', block: 'center' }));
+            const box = await el.boundingBox();
+            if (box) {
+                const hoverX = box.x + Math.min(box.width - 2, 4 + Math.random() * Math.max(6, box.width / 3));
+                const hoverY = box.y + Math.min(box.height - 2, 4 + Math.random() * Math.max(6, box.height / 3));
+                await page.mouse.move(hoverX, hoverY, { steps: 10 + Math.floor(Math.random() * 10) });
+                await new Promise(r => setTimeout(r, 120 + Math.floor(Math.random() * 240)));
+            }
+            await el.click({ delay: 40 });
+        } else {
+            await page.click(selector, { delay: 40 });
+        }
+    } catch (e) {
+        // Fallback to simple click
+        try { await page.click(selector); } catch (_) {}
+    }
+};
+
+// Robust form submit helper: tries button click, event dispatch, requestSubmit, and submit
+const robustSubmit = async (page, submitSelectorList, inputSelectorForEnter = '#password') => {
+    // Find first available submit selector
+    let submitSel = null;
+    for (const s of submitSelectorList) {
+        if (await waitForElementReady(page, s, 2000)) { submitSel = s; break; }
+    }
+
+    if (submitSel) {
+        // Ensure enabled
+        try {
+            await page.$eval(submitSel, (btn) => {
+                btn.disabled = false;
+                const cls = btn.classList;
+                if (cls && cls.contains('disabled')) cls.remove('disabled');
+            });
+        } catch (_) {}
+
+        // Try hover + click
+        await hoverAndClickHuman(page, submitSel).catch(() => {});
+        await new Promise(r => setTimeout(r, 150 + Math.floor(Math.random() * 250)));
+
+        // If no navigation/change, dispatch a native click event
+        try {
+            await page.$eval(submitSel, (btn) => {
+                btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+                btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+                btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+            });
+        } catch (_) {}
+
+        // Try submitting the nearest form
+        try {
+            await page.$eval(submitSel, (btn) => {
+                const form = btn.closest('form');
+                if (form && typeof form.requestSubmit === 'function') form.requestSubmit();
+                else if (form) form.submit();
+            });
+        } catch (_) {}
+    }
+
+    // Try pressing Enter inside password field
+    try { await page.focus(inputSelectorForEnter); await page.keyboard.press('Enter'); } catch (_) {}
+
+    // Last resort: find visible login form and submit
+    try {
+        await page.evaluate(() => {
+            const visible = (el) => {
+                if (!el) return false;
+                const rect = el.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0 && window.getComputedStyle(el).visibility !== 'hidden';
+            };
+            const forms = Array.from(document.querySelectorAll('form.login, form.woocommerce-form-login, form#loginform'));
+            const form = forms.find(f => visible(f));
+            if (form) {
+                if (typeof form.requestSubmit === 'function') form.requestSubmit();
+                else form.submit();
+            }
+        });
+    } catch (_) {}
+};
+
 // Function to get cookies from Browserless page
 const getCookies = async (page) => {
     try {
@@ -466,15 +592,10 @@ class PersistentBrowserSession {
             // Try regular browser first, fallback to Browserless if needed
             let browserResult;
 
-            try {
-                console.log('🔍 Attempting regular Puppeteer browser...');
-                browserResult = await createRegularBrowser();
-                console.log('✅ Regular browser created successfully');
-            } catch (regularError) {
-                console.log(`❌ Regular browser failed: ${regularError.message}`);
-                console.log('🔄 Falling back to Browserless...');
-                browserResult = await createCloudflareBypassBrowser();
-            }
+            // Always use regular Puppeteer (no Browserless / Cloudflare bypass)
+            console.log('🔍 Launching regular Puppeteer browser...');
+            browserResult = await createRegularBrowser();
+            console.log('✅ Regular browser created successfully');
 
             this.browser = browserResult.browser;
             this.page = browserResult.page;
@@ -507,8 +628,8 @@ class PersistentBrowserSession {
             throw new Error('USERNAME and PASSWORD environment variables are required');
         }
 
-        // Navigate to login page
-        await navigateWithRetry(this.page, 'https://www.realgpl.com/my-account/');
+        // Attempt sidebar login on homepage, fallback to my-account form
+        await navigateWithRetry(this.page, 'https://www.realgpl.com/');
 
         // Handle consent if present
         try {
@@ -522,58 +643,242 @@ class PersistentBrowserSession {
             console.log('ℹ️ No consent block found');
         }
 
-        // Wait for login form
+        // Try to open sidebar/menu that contains login
+        const sidebarToggles = [
+            // Site/theme-specific (Woodmart)
+            '.login-side-opener',
+            '.wd-header-my-account',
+            '.wd-tools-element.login-side-opener',
+            'a[title="My account"]',
+            // Generic menu/sidebar toggles
+            '.ast-mobile-menu-trigger',
+            '.menu-toggle',
+            'button[aria-label*="menu" i]',
+            '.elementor-menu-toggle',
+            '.eicon-menu-bar',
+            '.navbar-toggler',
+            '.toggle-navigation',
+            '.header__burger'
+        ];
+
+        for (const sel of sidebarToggles) {
+            try {
+                if (await waitForElementReady(this.page, sel, 3000)) {
+                    await this.page.click(sel);
+                    await new Promise(resolve => setTimeout(resolve, randomDelay(500, 1200)));
+                    break;
+                }
+            } catch (_) {}
+        }
+
+        // If sidebar doesn't expose form, try clicking a Login/My Account link
+        try {
+            const linkHandle = await this.page.evaluateHandle(() => {
+                const anchors = Array.from(document.querySelectorAll('a'));
+                return anchors.find(a => a.matches('a[title="My account"]') || /login|my\s*account/i.test(a.textContent || '')) || null;
+            });
+            if (linkHandle) {
+                await (await linkHandle.asElement()).click();
+                await new Promise(resolve => setTimeout(resolve, randomDelay(800, 1500)));
+            }
+        } catch (_) {}
+
+        // After attempting openers, wait briefly for inline login form to appear
+        try {
+            await Promise.race([
+                this.page.waitForSelector('#username', { timeout: 3000 }),
+                this.page.waitForSelector('form.login', { timeout: 3000 }),
+                this.page.waitForSelector('form.woocommerce-form-login', { timeout: 3000 })
+            ]);
+        } catch (_) {}
+
+        // If username field still not present, fallback to account page
+        const hasInlineForm = await waitForElementReady(this.page, '#username', 5000);
+        if (!hasInlineForm) {
+            await navigateWithRetry(this.page, 'https://www.realgpl.com/my-account/');
+        }
+
+        // Ensure form fields are available
         await waitForElementReady(this.page, '#username');
         await waitForElementReady(this.page, '#password');
 
-        console.log('📝 Entering credentials...');
-        await this.page.type('#username', username.toString());
-        await new Promise(resolve => setTimeout(resolve, randomDelay(500, 1000)));
-        await this.page.type('#password', password.toString());
-        await new Promise(resolve => setTimeout(resolve, randomDelay(500, 1000)));
+        // Up to 2 attempts; each attempt clicks submit N times (1,2)
+        let success = false;
+        for (let attempt = 1; attempt <= 2 && !success; attempt++) {
+            console.log(`📝 Filling credentials (attempt ${attempt})...`);
+            try {
+                // Clear and fill fields each attempt
+                await this.page.evaluate(() => {
+                    const u = document.querySelector('#username');
+                    const p = document.querySelector('#password');
+                    if (u) u.value = '';
+                    if (p) p.value = '';
+                });
+                await typeLikeHuman(this.page, '#username', username.toString());
+                await new Promise(resolve => setTimeout(resolve, randomDelay(300, 700)));
+                await typeLikeHuman(this.page, '#password', password.toString());
+                await new Promise(resolve => setTimeout(resolve, randomDelay(400, 900)));
 
-        // Submit login
-        await waitForElementReady(this.page, '.button.woocommerce-button.woocommerce-form-login__submit');
-        await this.page.click('.button.woocommerce-button.woocommerce-form-login__submit');
+                // Remember me if present
+                try {
+                    const rememberSelector = 'input[name="rememberme"], .woocommerce-form__input.woocommerce-form__input-checkbox[name="rememberme"]';
+                    const hasRemember = await this.page.$(rememberSelector);
+                    if (hasRemember) {
+                        const isChecked = await this.page.$eval(rememberSelector, el => el.checked);
+                        if (!isChecked) {
+                            await this.page.click(rememberSelector);
+                        }
+                    }
+                } catch (_) {}
 
-        // Wait for login success
-        try {
-            await Promise.race([
-                this.page.waitForNavigation({ timeout: 60000, waitUntil: 'domcontentloaded' }),
-                this.page.waitForSelector('.woocommerce-MyAccount-navigation', { timeout: 60000 }),
-                this.page.waitForSelector('.woocommerce-account', { timeout: 60000 })
-            ]);
-            console.log('✅ Successfully logged in');
-        } catch (error) {
-            console.log('⚠️ Login wait timed out, performing final verification...');
-            await new Promise(resolve => setTimeout(resolve, randomDelay(2000, 3000)));
+                // Submit button selectors
+                const submitSelectors = [
+                    // WooCommerce default
+                    '.button.woocommerce-button.woocommerce-form-login__submit',
+                    'button[name="login"]',
+                    'form.login button[type="submit"]',
+                    'form.woocommerce-form-login button[type="submit"]',
+                    '.woocommerce-form-login__submit',
+                    // Woodmart / theme variations
+                    '.wd-woo-login .button[type="submit"]',
+                    '.wd-woo-login button[type="submit"]',
+                    '.wd-woo-login .woocommerce-form-login__submit',
+                    '.wd-popup-login .button[type="submit"]',
+                    // Generic fallbacks
+                    'button[type="submit"].button',
+                    'button[type="submit"]',
+                    'input[type="submit"]'
+                ];
 
-            const loginStatus = await this.page.evaluate(() => {
-                const hasAccountNav = document.querySelector('.woocommerce-MyAccount-navigation') !== null;
-                const hasAccountContent = document.querySelector('.woocommerce-account') !== null;
-                const noLoginForm = document.querySelector('#username') === null;
-                const hasLogoutLink = document.querySelector('a[href*="customer-logout"]') !== null;
-                const currentUrl = window.location.href;
+                // Click/submit with increasing attempts using robust strategies
+                for (let c = 0; c < attempt; c++) {
+                    await robustSubmit(this.page, submitSelectors, '#password');
+                    await new Promise(resolve => setTimeout(resolve, randomDelay(300, 800)));
+                }
 
-                return {
-                    hasAccountNav,
-                    hasAccountContent,
-                    noLoginForm,
-                    hasLogoutLink,
-                    currentUrl,
-                    isLoggedIn: hasAccountNav || hasAccountContent || (noLoginForm && hasLogoutLink)
-                };
-            });
+                // Also try Enter key on password field once per attempt
+                try {
+                    await this.page.focus('#password');
+                    await this.page.keyboard.press('Enter');
+                } catch (_) {}
 
-            if (!loginStatus.isLoggedIn) {
-                throw new Error(`Login verification failed: ${error.message}`);
+                // Wait briefly for navigation or account indicators
+                try {
+                    await Promise.race([
+                        this.page.waitForNavigation({ timeout: 20000, waitUntil: 'domcontentloaded' }),
+                        this.page.waitForSelector('.woocommerce-MyAccount-navigation', { timeout: 20000 }),
+                        this.page.waitForSelector('a[href*="customer-logout"]', { timeout: 20000 })
+                    ]);
+                } catch (_) {}
+
+                // Poll for logged-in cookie and check page indicators
+                for (let t = 0; t < 5 && !success; t++) {
+                    success = await this.verifyLogin();
+                    if (success) break;
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+
+                if (!success) {
+                    // Capture any WooCommerce error messages to help diagnose
+                    try {
+                        const errorText = await this.page.evaluate(() => {
+                            const err = document.querySelector('ul.woocommerce-error');
+                            return err ? err.innerText.trim() : '';
+                        });
+                        if (errorText) console.log('⚠️  WooCommerce error:', errorText);
+                    } catch (_) {}
+                    console.log(`Login not confirmed after attempt ${attempt}`);
+                    await new Promise(resolve => setTimeout(resolve, randomDelay(1200, 2000)));
+                }
+            } catch (e) {
+                console.log(`Attempt ${attempt} error: ${e.message}`);
             }
-
-            console.log('✅ Login verified successfully (URL: ' + loginStatus.currentUrl + ')');
         }
 
-        // Save login cookies
-        this.loginCookies = await this.page.cookies('https://www.realgpl.com/');
+        if (!success) {
+            console.log('🔁 Sidebar login failed. Trying my-account page fallback (2 attempts)...');
+            try {
+                await navigateWithRetry(this.page, 'https://www.realgpl.com/my-account/');
+
+                for (let attempt = 1; attempt <= 2 && !success; attempt++) {
+                    await waitForElementReady(this.page, '#username');
+                    await waitForElementReady(this.page, '#password');
+
+                    await this.page.evaluate(() => {
+                        const u = document.querySelector('#username');
+                        const p = document.querySelector('#password');
+                        if (u) u.value = '';
+                        if (p) p.value = '';
+                    });
+                    await typeLikeHuman(this.page, '#username', username.toString());
+                    await new Promise(resolve => setTimeout(resolve, randomDelay(300, 700)));
+                    await typeLikeHuman(this.page, '#password', password.toString());
+
+                    // Remember me if present
+                    try {
+                        const rememberSelector = 'input[name="rememberme"], .woocommerce-form__input.woocommerce-form__input-checkbox[name="rememberme"]';
+                        const hasRemember = await this.page.$(rememberSelector);
+                        if (hasRemember) {
+                            const isChecked = await this.page.$eval(rememberSelector, el => el.checked);
+                            if (!isChecked) await this.page.click(rememberSelector);
+                        }
+                    } catch (_) {}
+
+                    // Submit
+                    const submitSelectors = [
+                        '.button.woocommerce-button.woocommerce-form-login__submit',
+                        'button[name="login"]',
+                        'form.login button[type="submit"]',
+                        'form.woocommerce-form-login button[type="submit"]',
+                        '.woocommerce-form-login__submit',
+                        'button[type="submit"].button',
+                        'button[type="submit"]',
+                        'input[type="submit"]'
+                    ];
+
+                    await robustSubmit(this.page, submitSelectors, '#password');
+
+                    try {
+                        await Promise.race([
+                            this.page.waitForNavigation({ timeout: 20000, waitUntil: 'domcontentloaded' }),
+                            this.page.waitForSelector('.woocommerce-MyAccount-navigation', { timeout: 20000 }),
+                            this.page.waitForSelector('a[href*="customer-logout"]', { timeout: 20000 })
+                        ]);
+                    } catch (_) {}
+
+                    for (let t = 0; t < 5 && !success; t++) {
+                        success = await this.verifyLogin();
+                        if (success) break;
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                    }
+                }
+            } catch (e) {
+                console.log(`My-account fallback error: ${e.message}`);
+            }
+
+            if (!success) {
+                throw new Error('Login failed after sidebar and my-account fallback attempts');
+            }
+        }
+        console.log('✅ Successfully logged in');
+
+        // Save login cookies for both apex and www domains
+        const wwwCookies = await this.page.cookies('https://www.realgpl.com/');
+        // Some installations set cookies on apex domain; fetch those as well
+        let apexCookies = [];
+        try {
+            apexCookies = await this.page.cookies('https://realgpl.com/');
+        } catch (_) { apexCookies = []; }
+
+        // Merge and de-duplicate by name+domain+path
+        const merged = [...wwwCookies, ...apexCookies];
+        const seen = new Set();
+        this.loginCookies = merged.filter(c => {
+            const key = `${c.name}|${c.domain}|${c.path}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
         this.isLoggedIn = true;
         console.log(`💾 Saved ${this.loginCookies.length} session cookies`);
 
@@ -582,13 +887,17 @@ class PersistentBrowserSession {
 
     // Verify if still logged in
     async verifyLogin() {
-        if (!this.page || !this.isLoggedIn) {
+        if (!this.page) {
             return false;
         }
 
         try {
-            const hasWpLoginCookie = (await this.page.cookies('https://www.realgpl.com/'))
-                .some(c => c.name && c.name.startsWith('wordpress_logged_in'));
+            // Check cookie jar directly first (works even off-domain)
+            const jarCookies = [
+                ...(await this.page.cookies('https://www.realgpl.com/')),
+                ...(await this.page.cookies('https://realgpl.com/')).catch(() => []) || []
+            ];
+            const hasWpLoginCookie = jarCookies.some(c => c.name && c.name.startsWith('wordpress_logged_in'));
 
             const loginStatus = await this.page.evaluate((hasCookie) => {
                 const hasLoginForm = document.querySelector('form.login, form.woocommerce-form-login, #username') !== null;
@@ -622,8 +931,22 @@ class PersistentBrowserSession {
             );
 
             if (validCookies.length > 0) {
-                console.log(`🔄 Restoring ${validCookies.length} session cookies`);
-                await this.page.setCookie(...validCookies);
+                // Ensure cookies cover both apex and www domains
+                const dualDomainCookies = [];
+                for (const c of validCookies) {
+                    dualDomainCookies.push(c);
+                    try {
+                        // If cookie is scoped only to one, create a sibling for the other
+                        if (c.domain && c.domain.includes('www.realgpl.com')) {
+                            dualDomainCookies.push({ ...c, domain: 'realgpl.com' });
+                        } else if (c.domain && c.domain === 'realgpl.com') {
+                            dualDomainCookies.push({ ...c, domain: 'www.realgpl.com' });
+                        }
+                    } catch (_) {}
+                }
+
+                console.log(`🔄 Restoring ${dualDomainCookies.length} session cookies`);
+                await this.page.setCookie(...dualDomainCookies);
                 this.isLoggedIn = await this.verifyLogin();
                 return this.isLoggedIn;
             } else {
@@ -672,6 +995,36 @@ class PersistentBrowserSession {
 // Global persistent session instance
 const persistentSession = new PersistentBrowserSession();
 
+// Process a verification link by navigating to it and confirming login
+const processVerificationLink = async (verificationUrl) => {
+    if (!verificationUrl || !/^https?:\/\//i.test(verificationUrl)) {
+        throw new Error('Invalid verification URL');
+    }
+
+    console.log(`🔗 Processing verification link: ${verificationUrl}`);
+    const { page } = await persistentSession.getBrowser();
+    await navigateWithRetry(page, verificationUrl);
+
+    // Wait briefly for any redirects and finalize
+    try { await page.waitForNavigation({ timeout: 15000, waitUntil: 'domcontentloaded' }); } catch (_) {}
+
+    // After visiting the link, mark session as logged in if indicators present
+    const verified = await persistentSession.verifyLogin();
+    if (!verified) {
+        // Try my-account to solidify state
+        try { await navigateWithRetry(page, 'https://www.realgpl.com/my-account/'); } catch (_) {}
+    }
+
+    const finalStatus = await persistentSession.verifyLogin();
+    if (finalStatus) {
+        persistentSession.isLoggedIn = true;
+        persistentSession.loginCookies = await page.cookies('https://www.realgpl.com/').catch(() => []);
+        console.log('✅ Verification link processed. Session is now logged in.');
+        return true;
+    }
+    throw new Error('Verification link did not result in a logged-in session');
+};
+
 // Function to close Browserless browser (legacy compatibility)
 const closeBrowser = async (browser) => {
     try {
@@ -687,6 +1040,9 @@ module.exports = {
     navigateWithRetry,
     handleCloudflareChallenge,
     addHumanLikeBehavior,
+    typeLikeHuman,
+    hoverAndClickHuman,
+    robustSubmit,
     waitForElementReady,
     getCookies,
     closeBrowser,
@@ -694,5 +1050,6 @@ module.exports = {
     getRandomUserAgent,
     getRandomViewport,
     PersistentBrowserSession,
-    persistentSession
+    persistentSession,
+    processVerificationLink
 };

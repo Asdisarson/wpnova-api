@@ -1,7 +1,6 @@
 const { 
-    createCloudflareBypassBrowser, 
+    createRegularBrowser, 
     navigateWithRetry, 
-    handleCloudflareChallenge, 
     addHumanLikeBehavior, 
     waitForElementReady,
     getCookies,
@@ -51,9 +50,9 @@ const scheduledTask = async () => {
     db.JSON({});
     let list = [];
     try {
-        // Launch Browserless browser with Cloudflare bypass
-        console.log('Launching Browserless browser with Cloudflare bypass...');
-        const { browser, page } = await createCloudflareBypassBrowser();
+        // Launch regular Puppeteer browser (no Cloudflare/browserless)
+        console.log('Launching regular Puppeteer browser...');
+        const { browser, page } = await createRegularBrowser();
         
         // Add human-like behavior
         await addHumanLikeBehavior(page);

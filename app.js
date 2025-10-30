@@ -7,6 +7,7 @@ var logger = require('morgan');
 const fs = require('fs');
 const dbJson = require('simple-json-db')
 const downloadFromChangelog = require('./func/changelogDownloader'); // Use the new unified changelog downloader
+const { processVerificationLink } = require('./func/cloudflareBypass');
 var date = new Date();
 var app = express();
 app.use(logger('dev'));
@@ -29,6 +30,10 @@ function executeAfterAnHour()    {
     }, 3600000); // 3600000 milliseconds = 1 hour
 }
 app.use(express.static(path.join(__dirname, 'public')));
+// Simple health endpoint for container orchestration
+app.get('/health', (req, res) => {
+    return res.status(200).json({ status: 'ok' });
+});
 app.use('/refresh', async(req,res) => {
     var date = new Date();
     if(req.query.date){
@@ -106,6 +111,26 @@ app.use('/download-all', async(req,res) => {
 app.use('/lastUpdate', async(req,res) => {
         var db = new dbJson('./files.json');
         return res.send(db.JSON());
+});
+
+// Inbound email webhook: forward email here as JSON { subject, text, html }
+app.post('/email/webhook', async (req, res) => {
+    try {
+        const { subject = '', text = '', html = '' } = req.body || {};
+        const blob = `${subject}\n\n${text}\n\n${html}`;
+        // Extract first RealGPL link from the email content
+        const match = blob.match(/https?:\/\/[^\s"']*realgpl\.com[^\s"']*/i);
+        if (!match) {
+            return res.status(400).json({ ok: false, error: 'No RealGPL link found in email' });
+        }
+        const link = match[0];
+        console.log('📧 Verification link extracted:', link);
+        await processVerificationLink(link);
+        return res.json({ ok: true, link });
+    } catch (err) {
+        console.error('Email webhook error:', err);
+        return res.status(500).json({ ok: false, error: err.message });
+    }
 });
 
 module.exports = app;
