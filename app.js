@@ -113,17 +113,33 @@ app.use('/lastUpdate', async(req,res) => {
         return res.send(db.JSON());
 });
 
-// Inbound email webhook: forward email here as JSON { subject, text, html }
+// Inbound email webhook: forward email here as JSON { subject, text, html, link? }
 app.post('/email/webhook', async (req, res) => {
     try {
-        const { subject = '', text = '', html = '' } = req.body || {};
+        const { subject = '', text = '', html = '', link: directLink } = req.body || {};
         const blob = `${subject}\n\n${text}\n\n${html}`;
-        // Extract first RealGPL link from the email content
-        const match = blob.match(/https?:\/\/[^\s"']*realgpl\.com[^\s"']*/i);
-        if (!match) {
-            return res.status(400).json({ ok: false, error: 'No RealGPL link found in email' });
+        // Prefer explicit link field, else extract first HTTPS link from email body
+        let link = (typeof directLink === 'string' && /^https?:\/\//i.test(directLink)) ? directLink : null;
+        if (!link) {
+            const anyUrl = blob.match(/https?:\/\/[^\s\"']+/i);
+            if (anyUrl) link = anyUrl[0];
         }
-        const link = match[0];
+        if (!link) {
+            return res.status(400).json({ ok: false, error: 'No link found in email' });
+        }
+
+        // Optional domain whitelist via env (comma-separated)
+        const allowed = (process.env.ALLOWED_VERIFICATION_DOMAINS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+        if (allowed.length > 0) {
+            try {
+                const { hostname } = new URL(link);
+                const hostOk = allowed.some(d => hostname.toLowerCase().endsWith(d));
+                if (!hostOk) {
+                    return res.status(400).json({ ok: false, error: `Link domain not allowed: ${hostname}` });
+                }
+            } catch (_) {}
+        }
+
         console.log('📧 Verification link extracted:', link);
         await processVerificationLink(link);
         return res.json({ ok: true, link });
