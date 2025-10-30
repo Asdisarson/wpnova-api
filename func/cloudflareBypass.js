@@ -1,4 +1,4 @@
-const puppeteer = require('puppeteer-core');
+const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
@@ -54,6 +54,16 @@ const randomDelay = (min = 1000, max = 3000) => {
     return Math.floor(Math.random() * (max - min + 1)) + min;
 };
 
+// Resolve a viable Chrome/Chromium executable path
+const resolveExecutablePath = () => {
+    const envPath = process.env.PUPPETEER_EXECUTABLE_PATH;
+    if (envPath && fs.existsSync(envPath)) return envPath;
+    const linuxPath = '/usr/bin/google-chrome-stable';
+    if (process.platform !== 'darwin' && fs.existsSync(linuxPath)) return linuxPath;
+    // On platforms where a system Chrome isn't present, let Puppeteer use its bundled Chromium
+    return null;
+};
+
 // Create regular Puppeteer browser (no Browserless)
 const createRegularBrowser = async () => {
     const userAgent = getRandomUserAgent();
@@ -64,10 +74,9 @@ const createRegularBrowser = async () => {
     
     try {
         // Try to launch local/regular browser (no Browserless)
-        const browser = await puppeteer.launch({
+        const execPath = resolveExecutablePath();
+        const launchOptions = {
             headless: false,
-            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || 
-                (process.platform === 'darwin' ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : '/usr/bin/google-chrome-stable'),
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
@@ -76,7 +85,9 @@ const createRegularBrowser = async () => {
                 '--disable-gpu',
                 '--window-size=' + viewport.width + ',' + viewport.height,
             ]
-        });
+        };
+        if (execPath) launchOptions.executablePath = execPath;
+        const browser = await puppeteer.launch(launchOptions);
 
         const page = await browser.newPage();
         
