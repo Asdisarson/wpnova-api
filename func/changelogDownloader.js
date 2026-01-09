@@ -170,109 +170,190 @@ async function downloadFromChangelog(options = {}) {
         
         console.log(`📅 Filtering products for date: ${targetDate}`);
         
-        // Extract product data from changelog (HTML 4 table structure)
-        const data = await page.evaluate((filterDate) => {
-            const rows = document.querySelectorAll('tr.awcpt-row');
-            const rowDataArray = [];
-            
-            for (const row of rows) {
-                const cells = row.querySelectorAll('td');
+        // Helper to extract product data from the current changelog page (HTML 4 table structure)
+        const extractProductsForDate = async () => {
+            return await page.evaluate((filterDate) => {
+                const rows = document.querySelectorAll('tr.awcpt-row');
+                const rowDataArray = [];
                 
-                // Get date from appropriate cell
-                const date = row.querySelector('.awcpt-date')?.innerText || 
-                            row.querySelector('td[class*="date"]')?.innerText;
-                
-                // Filter by date if specified
-                if (!filterDate || date === filterDate) {
-                    const id = row.getAttribute('data-id') || row.id;
+                for (const row of rows) {
+                    const cells = row.querySelectorAll('td');
                     
-                    // Get product name - try multiple approaches for HTML 4
-                    const productName = row.querySelector('.awcpt-title')?.innerText || 
-                                       row.querySelector('td[class*="title"]')?.innerText ||
-                                       row.querySelector('td strong')?.innerText;
+                    // Get date from appropriate cell
+                    const date = row.querySelector('.awcpt-date')?.innerText || 
+                                row.querySelector('td[class*="date"]')?.innerText;
                     
-                    // Try multiple selectors for download link (based on actual HTML structure)
-                    let downloadLink = null;
-                    
-                    // Method 1: Main download button with yith-wcmbs-download-button class
-                    downloadLink = row.querySelector('.awcpt-shortcode-wrap a.yith-wcmbs-download-button')?.getAttribute('href');
-                    
-                    // Method 2: Any link in awcpt-shortcode-wrap
-                    if (!downloadLink) {
-                        downloadLink = row.querySelector('.awcpt-shortcode-wrap a')?.getAttribute('href');
-                    }
-                    
-                    // Method 3: Look for protected_file parameter (unique to download links)
-                    if (!downloadLink) {
-                        const allLinks = row.querySelectorAll('a');
-                        for (const link of allLinks) {
-                            const href = link.getAttribute('href') || '';
-                            
-                            // Check if it's a download link with protected_file parameter
-                            if (href.includes('protected_file=') || 
-                                href.includes('?add-to-cart=') ||
-                                link.classList.contains('yith-wcmbs-download-button')) {
-                                downloadLink = href;
-                                break;
-                            }
-                        }
-                    }
-                    
-                    // Method 4: Look in last cell (download column)
-                    if (!downloadLink && cells.length > 3) {
-                        const downloadCell = cells[3]; // 4th column is download
-                        const linkInCell = downloadCell.querySelector('a');
-                        if (linkInCell) {
-                            downloadLink = linkInCell.getAttribute('href');
-                        }
-                    }
-                    
-                    // Get product URL
-                    const productURL = row.querySelector('.awcpt-prdTitle-col a')?.getAttribute('href') ||
-                                      row.querySelector('td a[href*="product"]')?.getAttribute('href') ||
-                                      row.querySelector('td a[href*="realgpl.com"]')?.getAttribute('href');
-                    
-                    if (id && productName) {
-                        // Extract version from product name
-                        let version = '';
-                        let textWithoutVersion = productName;
-                        try {
-                            const versionMatch = productName.match(/v\d+(\.\d+){0,3}/);
-                            if (versionMatch) {
-                                version = versionMatch[0].replace('v', '');
-                                textWithoutVersion = productName.replace(/ v\d+(\.\d+){0,3}/, '');
-                            }
-                        } catch (e) {}
+                    // Filter by date if specified
+                    if (!filterDate || date === filterDate) {
+                        const id = row.getAttribute('data-id') || row.id;
                         
-                        // Extract slug from URL
-                        let slug = '';
-                        let productId = '';
-                        if (productURL) {
+                        // Get product name - try multiple approaches for HTML 4
+                        const productName = row.querySelector('.awcpt-title')?.innerText || 
+                                           row.querySelector('td[class*="title"]')?.innerText ||
+                                           row.querySelector('td strong')?.innerText;
+                        
+                        // Try multiple selectors for download link (based on actual HTML structure)
+                        let downloadLink = null;
+                        
+                        // Method 1: Main download button with yith-wcmbs-download-button class
+                        downloadLink = row.querySelector('.awcpt-shortcode-wrap a.yith-wcmbs-download-button')?.getAttribute('href');
+                        
+                        // Method 2: Any link in awcpt-shortcode-wrap
+                        if (!downloadLink) {
+                            downloadLink = row.querySelector('.awcpt-shortcode-wrap a')?.getAttribute('href');
+                        }
+                        
+                        // Method 3: Look for protected_file parameter (unique to download links)
+                        if (!downloadLink) {
+                            const allLinks = row.querySelectorAll('a');
+                            for (const link of allLinks) {
+                                const href = link.getAttribute('href') || '';
+                                
+                                // Check if it's a download link with protected_file parameter
+                                if (href.includes('protected_file=') || 
+                                    href.includes('?add-to-cart=') ||
+                                    link.classList.contains('yith-wcmbs-download-button')) {
+                                    downloadLink = href;
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        // Method 4: Look in last cell (download column)
+                        if (!downloadLink && cells.length > 3) {
+                            const downloadCell = cells[3]; // 4th column is download
+                            const linkInCell = downloadCell.querySelector('a');
+                            if (linkInCell) {
+                                downloadLink = linkInCell.getAttribute('href');
+                            }
+                        }
+                        
+                        // Get product URL
+                        const productURL = row.querySelector('.awcpt-prdTitle-col a')?.getAttribute('href') ||
+                                          row.querySelector('td a[href*="product"]')?.getAttribute('href') ||
+                                          row.querySelector('td a[href*="realgpl.com"]')?.getAttribute('href');
+                        
+                        if (id && productName) {
+                            // Extract version from product name
+                            let version = '';
+                            let textWithoutVersion = productName;
                             try {
-                                const parsedUrl = new URL(productURL);
-                                const parts = productURL.split('/');
-                                slug = parts[parts.length - 1] || parts[parts.length - 2];
-                                productId = parsedUrl.searchParams.get("product_id");
+                                const versionMatch = productName.match(/v\d+(\.\d+){0,3}/);
+                                if (versionMatch) {
+                                    version = versionMatch[0].replace('v', '');
+                                    textWithoutVersion = productName.replace(/ v\d+(\.\d+){0,3}/, '');
+                                }
                             } catch (e) {}
+                            
+                            // Extract slug from URL
+                            let slug = '';
+                            let productId = '';
+                            if (productURL) {
+                                try {
+                                    const parsedUrl = new URL(productURL);
+                                    const parts = productURL.split('/');
+                                    slug = parts[parts.length - 1] || parts[parts.length - 2];
+                                    productId = parsedUrl.searchParams.get("product_id");
+                                } catch (e) {}
+                            }
+                            
+                            rowDataArray.push({
+                                id,
+                                productName,
+                                date,
+                                downloadLink,
+                                productURL,
+                                version,
+                                name: textWithoutVersion,
+                                slug,
+                                productId
+                            });
                         }
-                        
-                        rowDataArray.push({
-                            id,
-                            productName,
-                            date,
-                            downloadLink,
-                            productURL,
-                            version,
-                            name: textWithoutVersion,
-                            slug,
-                            productId
-                        });
                     }
                 }
+                
+                return rowDataArray;
+            }, targetDate);
+        };
+        
+        const maxPagesToScan = 20;
+        let currentPage = 1;
+        let data = [];
+        
+        while (currentPage <= maxPagesToScan) {
+            console.log(`📄 Scanning changelog page ${currentPage}/${maxPagesToScan}...`);
+            const pageData = await extractProductsForDate();
+            console.log(`➡️  Page ${currentPage} has ${pageData.length} matching products`);
+            
+            if (pageData.length > 0) {
+                data = pageData;
+                break;
             }
             
-            return rowDataArray;
-        }, targetDate);
+            const nextPageInfo = await page.evaluate(() => {
+                const selectors = [
+                    '.awcpt-pagination .page-numbers.next',
+                    '.awcpt-pagination a.next',
+                    '.awcpt-pagination .next'
+                ];
+                
+                for (const selector of selectors) {
+                    const btn = document.querySelector(selector);
+                    if (!btn) continue;
+                    
+                    const disabled = btn.classList.contains('disabled') || btn.getAttribute('aria-disabled') === 'true';
+                    
+                    return {
+                        hasNext: !disabled,
+                        href: btn.getAttribute('href') || '',
+                        selector
+                    };
+                }
+                
+                return { hasNext: false, href: '', selector: null };
+            });
+            
+            if (!nextPageInfo.hasNext) {
+                console.log('No additional changelog pages available or next button disabled. Stopping pagination.');
+                break;
+            }
+            
+            console.log('➡️  Moving to next changelog page...');
+            const previousFirstRowId = await page.evaluate(() => document.querySelector('tr.awcpt-row')?.getAttribute('data-id') || null);
+            
+            if (nextPageInfo.href && nextPageInfo.href !== '#') {
+                await delay(randomDelay(500, 1200));
+                await persistentSession.navigateWithSession(nextPageInfo.href);
+            } else if (nextPageInfo.selector) {
+                try {
+                    await page.click(nextPageInfo.selector);
+                } catch (clickErr) {
+                    console.log(`⚠️  Failed to click next page button: ${clickErr.message}`);
+                    break;
+                }
+            } else {
+                console.log('No navigation method for next page found.');
+                break;
+            }
+            
+            await delay(randomDelay(1500, 2500));
+            
+            // Re-wait for the table and rows after pagination
+            await waitForElementReady(page, 'table#awcpt-product-table-99936', 30000);
+            await waitForElementReady(page, 'table#awcpt-product-table-99936 tbody tr.awcpt-row', 60000)
+                .catch(async () => {
+                    console.log('⚠️  Row selector failed after pagination, trying alternate selector...');
+                    await waitForElementReady(page, 'table#awcpt-product-table-99936 tr.awcpt-row', 30000);
+                });
+            
+            await page.waitForFunction((previousId) => {
+                const firstRow = document.querySelector('tr.awcpt-row');
+                if (!firstRow) return false;
+                return firstRow.getAttribute('data-id') !== previousId;
+            }, { timeout: 10000 }, previousFirstRowId).catch(() => {});
+            
+            currentPage++;
+        }
         
         console.log(`📊 Found ${data.length} products in changelog`);
         
