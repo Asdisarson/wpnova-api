@@ -188,6 +188,9 @@ function csv_product_updater_find_product($slug) {
  * - 14: featuredImageUrl
  * - 15: shortDescription
  * - 16: description
+ * - 17: categories (JSON array)
+ * - 18: brand
+ * - 19: demoUrl (Developer Live Preview)
  *
  * @param array $row
  * @param string $slug
@@ -302,6 +305,97 @@ function csv_product_updater_create_product_from_row($row, $slug, &$log) {
 }
 
 /**
+ * Apply RealGPL metadata onto an existing WooCommerce product.
+ *
+ * - Categories → product_cat
+ * - Tag "Memberships" → product_tag
+ * - Meta: demo-url, developer
+ * - Descriptions: post_excerpt (short) and post_content (long)
+ * - Tax: taxable + standard class
+ * - Ensure virtual + downloadable
+ *
+ * @param int   $product_id
+ * @param array $row
+ * @param array $log
+ * @return void
+ */
+function csv_product_updater_apply_row_metadata($product_id, $row, &$log) {
+    $product_id = absint($product_id);
+    if ($product_id <= 0) return;
+
+    // Tax settings + flags
+    update_post_meta($product_id, '_downloadable', 'yes');
+    update_post_meta($product_id, '_virtual', 'yes');
+    update_post_meta($product_id, '_tax_status', 'taxable');
+    update_post_meta($product_id, '_tax_class', ''); // Standard
+
+    // Developer (Brand) and demo URL
+    $brand   = (string) csv_product_updater_row_value($row, 18, '');
+    $demoUrl = (string) csv_product_updater_row_value($row, 19, '');
+    if ($brand !== '') {
+        update_post_meta($product_id, 'developer', sanitize_text_field($brand));
+    }
+    if ($demoUrl !== '' && filter_var($demoUrl, FILTER_VALIDATE_URL)) {
+        update_post_meta($product_id, 'demo-url', esc_url_raw($demoUrl));
+    }
+
+    // Descriptions (standard mapping)
+    $short = (string) csv_product_updater_row_value($row, 15, '');
+    $long  = (string) csv_product_updater_row_value($row, 16, '');
+    if ($short !== '' || $long !== '') {
+        $post_update = array('ID' => $product_id);
+        if ($short !== '') $post_update['post_excerpt'] = wp_kses_post($short);
+        if ($long !== '')  $post_update['post_content'] = wp_kses_post($long);
+        wp_update_post($post_update);
+    }
+
+    // Categories (JSON array or comma-separated fallback)
+    $rawCats = (string) csv_product_updater_row_value($row, 17, '');
+    $catNames = array();
+    if ($rawCats !== '') {
+        $decoded = json_decode($rawCats, true);
+        if (is_array($decoded)) {
+            $catNames = $decoded;
+        } else {
+            $catNames = array_map('trim', explode(',', $rawCats));
+        }
+    }
+    $catNames = array_values(array_filter(array_map('sanitize_text_field', $catNames)));
+    if (!empty($catNames)) {
+        $catIds = array();
+        foreach ($catNames as $catName) {
+            $exists = term_exists($catName, 'product_cat');
+            if (!$exists) {
+                $created = wp_insert_term($catName, 'product_cat');
+                if (!is_wp_error($created) && isset($created['term_id'])) {
+                    $catIds[] = (int) $created['term_id'];
+                }
+            } else {
+                $catIds[] = is_array($exists) ? (int) $exists['term_id'] : (int) $exists;
+            }
+        }
+        $catIds = array_values(array_unique(array_filter($catIds)));
+        if (!empty($catIds)) {
+            // Replace categories with RealGPL categories (source of truth)
+            wp_set_object_terms($product_id, $catIds, 'product_cat', false);
+        }
+    }
+
+    // Tag: Memberships (always add)
+    $tagName = 'Memberships';
+    $tag = term_exists($tagName, 'product_tag');
+    if (!$tag) {
+        $tag = wp_insert_term($tagName, 'product_tag');
+    }
+    if (!is_wp_error($tag)) {
+        $tagId = is_array($tag) ? (int) $tag['term_id'] : (int) $tag;
+        if ($tagId > 0) {
+            wp_set_object_terms($product_id, array($tagId), 'product_tag', true);
+        }
+    }
+}
+
+/**
  * Get the current job state (background updater).
  *
  * @return array
@@ -347,6 +441,101 @@ function csv_product_updater_release_lock() {
 }
 
 /**
+ * Parse a CSV string into rows (without header row).
+ *
+ * @param string $csv_body
+ * @return array|WP_Error
+ */
+function csv_product_updater_parse_csv_body_to_rows($csv_body) {
+    if (!is_string($csv_body) || trim($csv_body) === '') {
+        return new WP_Error('csv_empty', 'CSV body is empty');
+    }
+
+    $csv_lines = preg_split("/\r\n|\n|\r/", trim($csv_body));
+    $csv_data = array_map('str_getcsv', $csv_lines);
+    array_shift($csv_data); // Remove header row
+
+    // Filter out any empty lines that parsed as a single empty column
+    $csv_data = array_values(array_filter($csv_data, function($row) {
+        return is_array($row) && !(count($row) === 1 && trim((string) $row[0]) === '');
+    }));
+
+    return $csv_data;
+}
+
+/**
+ * Get a stable local cache file path for the current job's CSV.
+ *
+ * @return string|WP_Error
+ */
+function csv_product_updater_get_job_csv_cache_file_path() {
+    $upload_dir = wp_upload_dir();
+    if (!is_array($upload_dir) || empty($upload_dir['basedir'])) {
+        return new WP_Error('csv_cache_dir', 'Could not determine uploads directory');
+    }
+
+    $dir = trailingslashit($upload_dir['basedir']) . 'csv-product-updater';
+    if (!file_exists($dir)) {
+        if (!wp_mkdir_p($dir)) {
+            return new WP_Error('csv_cache_dir', 'Failed to create cache directory: ' . $dir);
+        }
+    }
+
+    return trailingslashit($dir) . 'data.csv';
+}
+
+/**
+ * Download remote data.csv to a local file (once per job).
+ *
+ * @param string $csv_file_url
+ * @param string $file_path
+ * @param array  $log
+ * @return string|WP_Error
+ */
+function csv_product_updater_download_csv_to_file($csv_file_url, $file_path, &$log) {
+    // Stream to disk (fast + memory safe)
+    $response = wp_remote_get($csv_file_url, array(
+        'timeout'     => CSV_PRODUCT_UPDATER_HTTP_TIMEOUT,
+        'stream'      => true,
+        'filename'    => $file_path,
+        'redirection' => 5,
+    ));
+
+    if (is_wp_error($response)) {
+        if (file_exists($file_path)) @unlink($file_path);
+        return new WP_Error('csv_fetch_failed', 'Failed to fetch CSV data from ' . $csv_file_url . ' - ' . $response->get_error_message());
+    }
+
+    $code = wp_remote_retrieve_response_code($response);
+    if ($code != 200) {
+        if (file_exists($file_path)) @unlink($file_path);
+        return new WP_Error('csv_fetch_failed', 'Failed to fetch CSV data from ' . $csv_file_url . ' - HTTP ' . $code);
+    }
+
+    if (!file_exists($file_path) || filesize($file_path) <= 0) {
+        if (file_exists($file_path)) @unlink($file_path);
+        return new WP_Error('csv_fetch_failed', 'CSV download succeeded but file is empty: ' . $file_path);
+    }
+
+    $log[] = 'Cached data.csv locally: ' . basename($file_path) . ' (' . filesize($file_path) . ' bytes)';
+    return $file_path;
+}
+
+/**
+ * Read cached CSV file and parse rows.
+ *
+ * @param string $file_path
+ * @return array|WP_Error
+ */
+function csv_product_updater_read_csv_rows_from_file($file_path) {
+    if (!$file_path || !file_exists($file_path)) {
+        return new WP_Error('csv_cache_missing', 'Cached CSV file not found');
+    }
+    $csv_body = file_get_contents($file_path);
+    return csv_product_updater_parse_csv_body_to_rows($csv_body);
+}
+
+/**
  * Fetch and parse the remote CSV into rows (without header row).
  *
  * @param string $csv_file_url
@@ -373,16 +562,8 @@ function csv_product_updater_fetch_csv_rows($csv_file_url, &$log) {
         return new WP_Error('csv_fetch_failed', 'Failed to fetch CSV data from ' . $csv_file_url . ' - empty body');
     }
 
-    $csv_lines = preg_split("/\r\n|\n|\r/", trim($csv_body));
-    $csv_data = array_map('str_getcsv', $csv_lines);
-    array_shift($csv_data); // Remove header row
-
-    // Filter out any empty lines that parsed as a single empty column
-    $csv_data = array_values(array_filter($csv_data, function($row) {
-        return is_array($row) && !(count($row) === 1 && trim((string) $row[0]) === '');
-    }));
-
-    return $csv_data;
+    $parsed = csv_product_updater_parse_csv_body_to_rows($csv_body);
+    return $parsed;
 }
 
 /**
@@ -422,6 +603,9 @@ function csv_product_updater_process_row($row, $force_update, &$result, &$log) {
             return;
         }
     }
+
+    // Apply metadata/taxonomies for both created and existing products (even if version is up-to-date)
+    csv_product_updater_apply_row_metadata($product->ID, $row, $log);
 
     $new_version = (string) csv_product_updater_row_value($row, 5, ''); // version column
     $existing_version = get_post_meta($product->ID, 'product-version', true);
@@ -465,6 +649,7 @@ function csv_product_updater_process_row($row, $force_update, &$result, &$log) {
         if ($new_version !== '') {
             update_post_meta($product->ID, 'product-version', $new_version);
         }
+        // Keep flags consistent
         update_post_meta($product->ID, '_downloadable', 'yes');
         update_post_meta($product->ID, '_virtual', 'yes');
 
@@ -498,7 +683,18 @@ function csv_product_updater_start_job($force_update = false, $source = 'manual'
     $log = get_option('csv_product_updater_log', array());
     if (!is_array($log)) $log = array();
 
-    $rows = csv_product_updater_fetch_csv_rows($csv_file_url, $log);
+    // Download data.csv ONCE per job and cache locally (prevents repeated GET /data.csv per batch)
+    $cache_path = csv_product_updater_get_job_csv_cache_file_path();
+    if (is_wp_error($cache_path)) {
+        $rows = $cache_path;
+    } else {
+        $downloaded = csv_product_updater_download_csv_to_file($csv_file_url, $cache_path, $log);
+        if (is_wp_error($downloaded)) {
+            $rows = $downloaded;
+        } else {
+            $rows = csv_product_updater_read_csv_rows_from_file($cache_path);
+        }
+    }
     if (is_wp_error($rows)) {
         $message = 'Failed to start job: ' . $rows->get_error_message();
         array_unshift($log, $message);
@@ -541,6 +737,11 @@ function csv_product_updater_start_job($force_update = false, $source = 'manual'
         'cursor'       => 0,
         'total_rows'   => $total_rows,
         'current'      => array('slug' => '', 'title' => ''),
+        'csv_cache'    => array(
+            'file_path' => is_wp_error($cache_path) ? '' : $cache_path,
+            'url'       => $csv_file_url,
+            'fetched_at'=> $start_time,
+        ),
         'result'       => $result,
         'force_update' => (bool) $force_update,
         'source'       => (string) $source,
@@ -596,11 +797,32 @@ function csv_product_updater_process_batch() {
         return;
     }
 
-    $csv_file_url = FETCH_API_WPNOVA . 'data.csv';
     $log = get_option('csv_product_updater_log', array());
     if (!is_array($log)) $log = array();
 
-    $rows = csv_product_updater_fetch_csv_rows($csv_file_url, $log);
+    // Use cached CSV file from job state (do NOT re-download data.csv every batch)
+    $csv_file_url = FETCH_API_WPNOVA . 'data.csv';
+    $cache_path = '';
+    if (isset($state['csv_cache']) && is_array($state['csv_cache']) && !empty($state['csv_cache']['file_path'])) {
+        $cache_path = (string) $state['csv_cache']['file_path'];
+    }
+    if ($cache_path === '' || !file_exists($cache_path)) {
+        // Cache missing; re-download once (then reuse for all remaining batches)
+        $cache_path = csv_product_updater_get_job_csv_cache_file_path();
+        if (!is_wp_error($cache_path)) {
+            $downloaded = csv_product_updater_download_csv_to_file($csv_file_url, $cache_path, $log);
+            if (!is_wp_error($downloaded)) {
+                $state['csv_cache'] = array(
+                    'file_path' => $cache_path,
+                    'url'       => $csv_file_url,
+                    'fetched_at'=> current_time('mysql'),
+                );
+                csv_product_updater_save_job_state($state);
+            }
+        }
+    }
+
+    $rows = csv_product_updater_read_csv_rows_from_file($cache_path);
     if (is_wp_error($rows)) {
         $state['status'] = 'error';
         $state['ended_at'] = current_time('mysql');

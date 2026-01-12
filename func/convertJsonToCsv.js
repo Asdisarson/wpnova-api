@@ -41,7 +41,11 @@ const convertJsonToCsv = (jsonData, outputFile, callback) => {
             // Single-product page enrichments (kept at the end so legacy column positions stay stable)
             'featuredImageUrl',
             'shortDescription',
-            'description'
+            'description',
+            // RealGPL product metadata for WP mapping
+            'categories',
+            'brand',
+            'demoUrl'
         ];
         
         // Get all keys from the data that might not be in our ordered list
@@ -63,6 +67,15 @@ const convertJsonToCsv = (jsonData, outputFile, callback) => {
         // Convert JSON to CSV with ordered columns
         let csvContent = orderedColumns.join(',') + '\n';
         
+        const sanitizeCsvString = (value) => {
+            return (value ?? '')
+                .toString()
+                .replace(/\r\n/g, '\n')
+                .replace(/\r/g, '\n')
+                .replace(/\n/g, ' ')
+                .replace(/"/g, '""');
+        };
+        
         jsonData.forEach(item => {
             const row = orderedColumns.map(header => {
                 // Handle special characters and ensure proper CSV format
@@ -71,16 +84,25 @@ const convertJsonToCsv = (jsonData, outputFile, callback) => {
                 if (typeof value === 'string') {
                     // IMPORTANT: Keep every CSV row on a single physical line.
                     // The WordPress plugin currently splits by newlines before parsing CSV, so embedded newlines would break parsing.
-                    const sanitized = value
-                        .replace(/\r\n/g, '\n')
-                        .replace(/\r/g, '\n')
-                        .replace(/\n/g, ' ')
-                        .replace(/"/g, '""');
+                    const sanitized = sanitizeCsvString(value);
                     return `"${sanitized}"`;
                 } else if (value === null) {
                     return '';
-                } else {
+                } else if (typeof value === 'number' || typeof value === 'boolean') {
                     return value;
+                } else if (typeof value === 'object') {
+                    // Arrays/objects must be serialized safely so commas don't break CSV columns
+                    let json;
+                    try {
+                        json = JSON.stringify(value);
+                    } catch (_) {
+                        json = String(value);
+                    }
+                    const sanitized = sanitizeCsvString(json);
+                    return `"${sanitized}"`;
+                } else {
+                    const sanitized = sanitizeCsvString(String(value));
+                    return `"${sanitized}"`;
                 }
             }).join(',');
             

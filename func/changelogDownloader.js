@@ -608,11 +608,29 @@ async function downloadFromChangelog(options = {}) {
                 .trim();
         };
 
+        const normalizeTextArray = (value) => {
+            if (!Array.isArray(value)) return [];
+            const cleaned = value.map(v => normalizeText(v)).filter(Boolean);
+            // Deduplicate while preserving order
+            const seen = new Set();
+            const out = [];
+            for (const v of cleaned) {
+                if (seen.has(v)) continue;
+                seen.add(v);
+                out.push(v);
+            }
+            return out;
+        };
+
         const applyDetails = (item, details) => {
             if (!details || typeof details !== 'object') return;
-            if (typeof details.description === 'string' && details.description) item.description = details.description;
-            if (typeof details.shortDescription === 'string' && details.shortDescription) item.shortDescription = details.shortDescription;
-            if (typeof details.featuredImageUrl === 'string' && details.featuredImageUrl) item.featuredImageUrl = details.featuredImageUrl;
+            // Assign even empty values (so we don't keep re-fetching optional fields forever)
+            if ('description' in details) item.description = normalizeText(details.description);
+            if ('shortDescription' in details) item.shortDescription = normalizeText(details.shortDescription);
+            if ('featuredImageUrl' in details) item.featuredImageUrl = normalizeText(details.featuredImageUrl);
+            if ('categories' in details) item.categories = normalizeTextArray(details.categories);
+            if ('brand' in details) item.brand = normalizeText(details.brand);
+            if ('demoUrl' in details) item.demoUrl = normalizeText(details.demoUrl);
         };
 
         const getPreviousDetailsForItem = (item) => {
@@ -620,12 +638,24 @@ async function downloadFromChangelog(options = {}) {
             const prev = (item.productURL && previousByProductURL.get(item.productURL)) || (item.slug && previousBySlug.get(item.slug));
             if (!prev) return null;
             if (item.version && prev.version && String(item.version) !== String(prev.version)) return null;
+
+            const hasAny =
+                ('description' in prev) ||
+                ('shortDescription' in prev) ||
+                ('featuredImageUrl' in prev) ||
+                ('categories' in prev) ||
+                ('brand' in prev) ||
+                ('demoUrl' in prev);
+            if (!hasAny) return null;
+
             const details = {
                 description: normalizeText(prev.description),
                 shortDescription: normalizeText(prev.shortDescription),
-                featuredImageUrl: normalizeText(prev.featuredImageUrl)
+                featuredImageUrl: normalizeText(prev.featuredImageUrl),
+                categories: normalizeTextArray(prev.categories),
+                brand: normalizeText(prev.brand),
+                demoUrl: normalizeText(prev.demoUrl)
             };
-            if (!details.description && !details.shortDescription && !details.featuredImageUrl) return null;
             return details;
         };
 
@@ -683,7 +713,74 @@ async function downloadFromChangelog(options = {}) {
 
                 const featuredImageUrl = abs(pickImgUrl());
 
-                return { description, shortDescription, featuredImageUrl };
+                // Categories (scoped to product meta/summary to avoid nav menus)
+                const metaRoot =
+                    document.querySelector('.product_meta') ||
+                    document.querySelector('.summary') ||
+                    document.querySelector('.single-product-summary') ||
+                    document.querySelector('.product') ||
+                    document.body;
+
+                const uniq = (arr) => {
+                    const out = [];
+                    const seen = new Set();
+                    for (const raw of arr) {
+                        const v = normalize(raw);
+                        if (!v) continue;
+                        if (seen.has(v)) continue;
+                        seen.add(v);
+                        out.push(v);
+                    }
+                    return out;
+                };
+
+                let categories = [];
+                const postedIn = metaRoot.querySelector('.posted_in') || metaRoot.querySelector('span.posted_in');
+                if (postedIn) {
+                    const links = Array.from(postedIn.querySelectorAll('a'));
+                    categories = uniq(links.map(a => a.textContent));
+                    if (!categories.length) {
+                        const m = (postedIn.textContent || '').match(/categories:\s*(.+)$/i);
+                        if (m && m[1]) {
+                            categories = uniq(m[1].split(','));
+                        }
+                    }
+                }
+
+                // Brand (from additional information table or from metaRoot text like "Brand: X")
+                let brand = '';
+                const attributeTables = Array.from(document.querySelectorAll('table.woocommerce-product-attributes, table.shop_attributes'));
+                for (const table of attributeTables) {
+                    const rows = Array.from(table.querySelectorAll('tr'));
+                    for (const row of rows) {
+                        const label = normalize(row.querySelector('th')?.textContent || row.querySelector('.woocommerce-product-attributes-item__label')?.textContent);
+                        if (!label) continue;
+                        if (!/brand/i.test(label)) continue;
+                        const value = normalize(row.querySelector('td')?.textContent || row.querySelector('.woocommerce-product-attributes-item__value')?.textContent);
+                        if (value) {
+                            brand = value;
+                            break;
+                        }
+                    }
+                    if (brand) break;
+                }
+                if (!brand) {
+                    const m = (metaRoot.textContent || '').match(/brand:\s*([^\n\r]+?)(?:\s{2,}|$)/i);
+                    if (m && m[1]) {
+                        // If categories + brand are on the same line, trim at next label if present
+                        brand = normalize(m[1]).replace(/license:.*$/i, '').trim();
+                    }
+                }
+
+                // Developer Live Preview URL
+                let demoUrl = '';
+                const demoLink = Array.from(metaRoot.querySelectorAll('a')).find(a => /developer\s+live\s+preview/i.test(a.textContent || ''));
+                if (demoLink) {
+                    demoUrl = demoLink.getAttribute('href') || '';
+                }
+                demoUrl = abs(demoUrl);
+
+                return { description, shortDescription, featuredImageUrl, categories, brand, demoUrl };
             });
         };
 
@@ -691,7 +788,14 @@ async function downloadFromChangelog(options = {}) {
             if (!fetchProductDetails) return { ok: false, usedCache: false, navigated: false };
             if (!item || typeof item !== 'object' || !item.productURL) return { ok: false, usedCache: false, navigated: false };
 
-            const needsDetails = () => !item.description || !item.shortDescription || !item.featuredImageUrl;
+            // Check undefined to avoid repeatedly re-fetching optional fields that may legitimately be empty
+            const needsDetails = () =>
+                item.description === undefined ||
+                item.shortDescription === undefined ||
+                item.featuredImageUrl === undefined ||
+                item.categories === undefined ||
+                item.brand === undefined ||
+                item.demoUrl === undefined;
             if (!needsDetails()) return { ok: true, usedCache: true, navigated: false };
 
             let usedCache = false;
@@ -727,7 +831,10 @@ async function downloadFromChangelog(options = {}) {
             const cleaned = {
                 description: normalizeText(raw?.description),
                 shortDescription: normalizeText(raw?.shortDescription),
-                featuredImageUrl: normalizeText(raw?.featuredImageUrl)
+                featuredImageUrl: normalizeText(raw?.featuredImageUrl),
+                categories: normalizeTextArray(raw?.categories),
+                brand: normalizeText(raw?.brand),
+                demoUrl: normalizeText(raw?.demoUrl)
             };
             detailsCache.set(item.productURL, cleaned);
             applyDetails(item, cleaned);
