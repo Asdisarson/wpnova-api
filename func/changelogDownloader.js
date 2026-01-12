@@ -226,20 +226,27 @@ async function downloadFromChangelog(options = {}) {
         
         console.log(`✅ Changelog table data loaded with ${rowCount} total rows`);
         
-        // Format date for comparison
-        const targetDate = date.toLocaleDateString('en-US', {
+        // Normalize start date (midnight) and log range
+        const startDate = new Date(date);
+        const startTimestamp = new Date(
+            startDate.getFullYear(),
+            startDate.getMonth(),
+            startDate.getDate()
+        ).getTime();
+        const startDateLabel = startDate.toLocaleDateString('en-US', {
             year: 'numeric',
             month: 'long',
             day: 'numeric',
         });
-        
-        console.log(`📅 Filtering products for date: ${targetDate}`);
+        console.log(`📅 Collecting products from ${startDateLabel} through today`);
         
         // Helper to extract product data from the current changelog page (HTML 4 table structure)
-        const extractProductsForDate = async () => {
-            return await page.evaluate((filterDate) => {
+        // Returns items on/after start date and whether older dates were encountered (so we can stop paginating)
+        const extractProductsSince = async () => {
+            return await page.evaluate((startTs) => {
             const rows = document.querySelectorAll('tr.awcpt-row');
             const rowDataArray = [];
+            let reachedOlder = false;
             
             for (const row of rows) {
                 const cells = row.querySelectorAll('td');
@@ -248,8 +255,23 @@ async function downloadFromChangelog(options = {}) {
                 const date = row.querySelector('.awcpt-date')?.innerText || 
                             row.querySelector('td[class*="date"]')?.innerText;
                 
-                // Filter by date if specified
-                if (!filterDate || date === filterDate) {
+                // Parse date and decide whether to include
+                let rowTime = null;
+                if (date) {
+                    rowTime = Date.parse(date);
+                    if (!rowTime && typeof date === 'string') {
+                        try {
+                            rowTime = new Date(date).getTime();
+                        } catch (_) {}
+                    }
+                }
+                if (rowTime && rowTime < startTs) {
+                    reachedOlder = true;
+                    continue;
+                }
+                
+                if (rowTime && rowTime >= startTs) {
+                
                     const id = row.getAttribute('data-id') || row.id;
                     
                     // Get product name - try multiple approaches for HTML 4
@@ -334,11 +356,11 @@ async function downloadFromChangelog(options = {}) {
                             productId
                         });
                     }
-                }
+                } // end include branch
             }
             
-            return rowDataArray;
-        }, targetDate);
+            return { items: rowDataArray, reachedOlder };
+        }, startTimestamp);
         };
         
         const maxPagesToScan = 5;
@@ -347,11 +369,12 @@ async function downloadFromChangelog(options = {}) {
         
         while (currentPage <= maxPagesToScan) {
             console.log(`📄 Scanning changelog page ${currentPage}/${maxPagesToScan}...`);
-            const pageData = await extractProductsForDate();
-            console.log(`➡️  Page ${currentPage} has ${pageData.length} matching products`);
+            const { items: pageData, reachedOlder } = await extractProductsSince();
+            console.log(`➡️  Page ${currentPage} has ${pageData.length} matching products (on/after start date)`);
+            data.push(...pageData);
             
-            if (pageData.length > 0) {
-                data = pageData;
+            if (reachedOlder) {
+                console.log('⏹️  Encountered entries older than start date; stopping pagination.');
                 break;
             }
             
