@@ -68,6 +68,14 @@ app.get('/refresh', async(req, res) => {
     }
     
     console.log(`Refreshing changelog for date: ${date.toLocaleDateString()}`);
+
+    // Optional: propagate force_update to the WordPress webhook trigger (after CSV generation)
+    const forceUpdateWebhook = (() => {
+        const v = req.query.force_update ?? req.query.force;
+        if (v === undefined || v === null) return false;
+        const s = String(v).trim().toLowerCase();
+        return s === '1' || s === 'true' || s === 'yes' || s === 'on';
+    })();
     
     // Set a longer timeout for this endpoint as it can take a while
     req.setTimeout(1800000); // 30 minutes
@@ -78,7 +86,8 @@ app.get('/refresh', async(req, res) => {
         const result = await downloadFromChangelog({
             date: date,
             resultsPerPage: 500,
-            downloadFiles: true
+            downloadFiles: true,
+            forceUpdateWebhook
         });
         
         executeAfterAnHour();

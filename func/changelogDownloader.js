@@ -175,7 +175,8 @@ async function downloadFromChangelog(options = {}) {
         date = new Date(),
         resultsPerPage = 500,
         downloadFiles = true,
-        fetchProductDetails = true
+        fetchProductDetails = true,
+        forceUpdateWebhook = false
     } = options;
     
     // Persist the latest run output at repo root so the API endpoint `/lastUpdate` returns fresh data
@@ -1012,7 +1013,7 @@ async function downloadFromChangelog(options = {}) {
         await notifyWordPressDataReady({
             downloadedCount: list.length,
             errorCount: errors.length,
-            forceUpdate: false
+            forceUpdate: forceUpdateWebhook
         });
         
         // Close persistent browser session

@@ -50,10 +50,19 @@ function csv_product_updater_refresh_deactivation() {
 add_action('csv_product_updater_refresh_daily_event', 'send_refresh_request');
 
 // Function to send the GET request to the endpoint
-function send_refresh_request($date = null) {
+function send_refresh_request($date = null, $force_update = false) {
     $endpoint_url = FETCH_API_WPNOVA . 'refresh';
+    
+    $params = array();
     if ($date) {
-        $endpoint_url .= '?date=' . urlencode($date);
+        $params['date'] = $date;
+    }
+    if ($force_update) {
+        // Tell the API to trigger a forced WP update once CSV is generated
+        $params['force_update'] = '1';
+    }
+    if (!empty($params)) {
+        $endpoint_url = add_query_arg($params, $endpoint_url);
     }
     $response = wp_remote_get($endpoint_url, array('timeout' => CSV_PRODUCT_UPDATER_HTTP_TIMEOUT));
 
@@ -1345,6 +1354,7 @@ function csv_product_updater_admin_page() {
     echo '<label for="csv_product_updater_date">Select Date: </label>';
     echo '<input type="date" id="csv_product_updater_date" name="csv_product_updater_date" value="' . esc_attr(get_option('csv_product_updater_last_refresh_date', date('Y-m-d'))) . '" />';
     echo '<input type="submit" name="csv_product_updater_send_refresh" value="Send Refresh Request" />';
+    echo ' <label style="margin-left:10px;"><input type="checkbox" name="csv_product_updater_refresh_force_update" value="1" /> Force update products</label>';
     echo '<p>Last refresh request sent on: ' . get_option('csv_product_updater_last_refresh_date', 'Never') . '</p>';
     echo '</form>';
 
@@ -1357,6 +1367,13 @@ function csv_product_updater_admin_page() {
     // If the log data exists, display it
     if (!empty($log)) {
         echo '<h2>Update Log</h2>';
+        
+        // Clear log button
+        echo '<form method="post" style="margin: 10px 0;">';
+        wp_nonce_field('csv_product_clear_log_nonce', 'csv_product_clear_log_nonce_field');
+        echo '<input type="submit" name="csv_product_updater_clear_log" value="Clear Log" class="button" onclick="return confirm(\'Clear the update log?\');" />';
+        echo '</form>';
+        
         echo '<ul>';
         foreach ($log as $log_item) {
             echo '<li>' . esc_html($log_item) . '</li>';
@@ -1369,6 +1386,13 @@ function csv_product_updater_admin_page() {
 add_action('admin_init', 'csv_product_updater_admin_init');
 
 function csv_product_updater_admin_init() {
+    if (isset($_POST['csv_product_updater_clear_log']) && check_admin_referer('csv_product_clear_log_nonce', 'csv_product_clear_log_nonce_field')) {
+        update_option('csv_product_updater_log', array(), false);
+        // Keep the UI clean: do not erase job state, just the log
+        wp_safe_redirect(menu_page_url('csv-product-updater', false));
+        exit;
+    }
+
     if (isset($_POST['csv_product_updater_update']) && check_admin_referer('csv_product_updater_nonce', 'csv_product_updater_nonce_field')) {
         // Start background job (fallback if JS is disabled)
         csv_product_updater_start_job(false, 'admin_form');
@@ -1390,11 +1414,14 @@ function csv_product_updater_admin_init() {
         if (empty($selected_date)) {
             $selected_date = date('Y-m-d'); // Default to current date if none selected
         }
+        
+        // Force update (propagates to the API which then triggers WP update with force_update)
+        $force_refresh_update = isset($_POST['csv_product_updater_refresh_force_update']) && (string) $_POST['csv_product_updater_refresh_force_update'] === '1';
 
         // Set the date of the last refresh request
         update_option('csv_product_updater_last_refresh_date', current_time('mysql'));
 
-        send_refresh_request($selected_date);
+        send_refresh_request($selected_date, $force_refresh_update);
     }
     
     // Handle fixing problematic URLs
