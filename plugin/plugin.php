@@ -117,7 +117,7 @@ if (!defined('CSV_PRODUCT_UPDATER_REFRESH_QUEUE_OPTION')) {
     define('CSV_PRODUCT_UPDATER_REFRESH_QUEUE_OPTION', 'csv_product_updater_refresh_queue_state');
 }
 if (!defined('CSV_PRODUCT_UPDATER_REFRESH_QUEUE_MAX_DAYS')) {
-    define('CSV_PRODUCT_UPDATER_REFRESH_QUEUE_MAX_DAYS', 30);
+    define('CSV_PRODUCT_UPDATER_REFRESH_QUEUE_MAX_DAYS', 90);
 }
 
 // WP-Cron hook for refresh queue processing
