@@ -6,7 +6,12 @@ Version: 1.1
 Author: WP NOVA
 */
 
-define('FETCH_API_WPNOVA', 'https://seal-app-qpcgi.ondigitalocean.app/');
+define('FETCH_API_WPNOVA', 'https://seashell-app-duvll.ondigitalocean.app/');
+
+// 15 minutes (in seconds) for all network calls made by this plugin
+if (!defined('CSV_PRODUCT_UPDATER_HTTP_TIMEOUT')) {
+    define('CSV_PRODUCT_UPDATER_HTTP_TIMEOUT', defined('MINUTE_IN_SECONDS') ? 15 * MINUTE_IN_SECONDS : 900);
+}
 
 // Register activation hook
 register_activation_hook(__FILE__, 'csv_product_updater_activation');
@@ -37,7 +42,7 @@ function send_refresh_request($date = null) {
     if ($date) {
         $endpoint_url .= '?date=' . urlencode($date);
     }
-    $response = wp_remote_get($endpoint_url);
+    $response = wp_remote_get($endpoint_url, array('timeout' => CSV_PRODUCT_UPDATER_HTTP_TIMEOUT));
 
     // Handle the response if needed
     if (is_wp_error($response)) {
@@ -73,21 +78,49 @@ function update_product_files() {
         'start_time' => current_time('mysql'),
         'total_rows' => 0,
         'products_updated' => 0,
+        'products_up_to_date' => 0,
         'products_not_found' => 0,
         'download_failures' => 0
     );
 
-    // Get CSV data from the URL
-    $csv_data = @array_map('str_getcsv', @file($csv_file_url));
-    
-    if (!$csv_data) {
-        $error_message = 'Failed to fetch CSV data from ' . $csv_file_url;
+    // Get CSV data from the URL (WordPress HTTP API)
+    $csv_response = wp_remote_get($csv_file_url, array(
+        'timeout'     => CSV_PRODUCT_UPDATER_HTTP_TIMEOUT,
+        'redirection' => 5,
+    ));
+
+    if (is_wp_error($csv_response)) {
+        $error_message = 'Failed to fetch CSV data from ' . $csv_file_url . ' - ' . $csv_response->get_error_message();
         $log[] = $error_message;
         update_option('csv_product_updater_log', $log);
         $result['error'] = $error_message;
         $result['end_time'] = current_time('mysql');
         return $result;
     }
+
+    $csv_response_code = wp_remote_retrieve_response_code($csv_response);
+    if ($csv_response_code != 200) {
+        $error_message = 'Failed to fetch CSV data from ' . $csv_file_url . ' - HTTP ' . $csv_response_code;
+        $log[] = $error_message;
+        update_option('csv_product_updater_log', $log);
+        $result['error'] = $error_message;
+        $result['end_time'] = current_time('mysql');
+        return $result;
+    }
+
+    $csv_body = wp_remote_retrieve_body($csv_response);
+    if (!is_string($csv_body) || trim($csv_body) === '') {
+        $error_message = 'Failed to fetch CSV data from ' . $csv_file_url . ' - empty body';
+        $log[] = $error_message;
+        update_option('csv_product_updater_log', $log);
+        $result['error'] = $error_message;
+        $result['end_time'] = current_time('mysql');
+        return $result;
+    }
+
+    $csv_lines = preg_split("/\r\n|\n|\r/", trim($csv_body));
+    
+    $csv_data = array_map('str_getcsv', $csv_lines);
     
     array_shift($csv_data);  // Remove the header row
     $result['total_rows'] = count($csv_data);
@@ -95,32 +128,12 @@ function update_product_files() {
 
     // Iterate over each row of the CSV data
     foreach ($csv_data as $row) {
-        // Extract the file URL
-        $file_url = $row[8];  // fileUrl column
-        // Ensure no double slashes when concatenating
-        $file_url = rtrim(FETCH_API_WPNOVA, '/') . '/' . ltrim($file_url, '/');
-
-        // Check if the file URL is valid
-        if (filter_var($file_url, FILTER_VALIDATE_URL) === false) {
-            $log[] = 'Invalid file URL: ' . $file_url;
-            $result['download_failures']++;
+        // Extract the slug early so we don't download files for missing products
+        $slug = isset($row[7]) ? trim($row[7]) : '';  // slug column
+        if ($slug === '') {
+            $log[] = 'Skipped row - empty slug';
             continue;
         }
-
-        // Download the file and save it temporarily on your server
-        $download_result = download_file($file_url);
-
-        // Check if the file was downloaded successfully
-        if ($download_result === false || !is_array($download_result)) {
-            $log[] = 'Failed to download file from URL: ' . $file_url;
-            $result['download_failures']++;
-            continue;
-        }
-        
-        list($temp_file_path, $original_file_name) = $download_result;
-
-        // Extract the slug
-        $slug = trim($row[7]);  // slug column
 
         // Find a product that matches the slug
         $product = get_page_by_path($slug, OBJECT, 'product');
@@ -140,15 +153,57 @@ function update_product_files() {
             wp_reset_postdata();
         }
 
-        // If a matching product was found, update its file
+        // If a matching product was found, update its file (only if version changed)
         if ($product) {
-            // Set the downloadable file name from the "filename" column
-            $download_file_name = basename($row[8]);  // filename column
+            $new_version = isset($row[5]) ? trim($row[5]) : ''; // version column
+            $existing_version = get_post_meta($product->ID, 'product-version', true);
+            if ($new_version !== '' && (string) $existing_version === (string) $new_version) {
+                $log[] = 'Up-to-date - skipped download for product: ' . $slug . ' (ID: ' . $product->ID . ', version: ' . $new_version . ')';
+                $result['products_up_to_date']++;
+                continue;
+            }
+
+            // Extract the file URL (only after we know we need to update)
+            $file_url = isset($row[8]) ? $row[8] : '';  // fileUrl column
+            // Ensure no double slashes when concatenating
+            $file_url = rtrim(FETCH_API_WPNOVA, '/') . '/' . ltrim($file_url, '/');
+
+            // Check if the file URL is valid
+            if (filter_var($file_url, FILTER_VALIDATE_URL) === false) {
+                $log[] = 'Invalid file URL: ' . $file_url;
+                $result['download_failures']++;
+                continue;
+            }
+
+            // Download the file and save it temporarily on your server (streaming, no in-memory body)
+            $download_result = download_file($file_url);
+
+            // Check if the file was downloaded successfully
+            if ($download_result === false || !is_array($download_result)) {
+                $log[] = 'Failed to download file from URL: ' . $file_url;
+                $result['download_failures']++;
+                continue;
+            }
+
+            list($temp_file_path, $original_file_name) = $download_result;
+
+            // Use the filename from the URL path (ignores query strings)
+            $download_file_name = basename(parse_url($file_url, PHP_URL_PATH));
+            $download_file_name = sanitize_file_name($download_file_name);
+            if (empty($download_file_name)) {
+                $download_file_name = sanitize_file_name($original_file_name);
+            }
+            if (empty($download_file_name)) {
+                $download_file_name = 'download.zip';
+            }
+
             $update_success = update_product_file($product->ID, $temp_file_path, $download_file_name);
             
             if ($update_success) {
                 // Update the product version
-                update_post_meta($product->ID, 'product-version', $row[5]);  // version column
+                if ($new_version !== '') {
+                    update_post_meta($product->ID, 'product-version', $new_version);  // version column
+                }
                 
                 // Ensure product is marked as downloadable
                 update_post_meta($product->ID, '_downloadable', 'yes');
@@ -157,15 +212,14 @@ function update_product_files() {
                 $log[] = 'Updated product: ' . $slug . ' (ID: ' . $product->ID . ')';
                 $result['products_updated']++;
             } else {
+                // Clean up the temp file on failure (update_product_file only moves it on success)
+                if (isset($temp_file_path) && file_exists($temp_file_path)) {
+                    unlink($temp_file_path);
+                }
                 $log[] = 'Failed to update files for product: ' . $slug . ' (ID: ' . $product->ID . ')';
                 $result['download_failures']++;
             }
         } else {
-            // Clean up the temp file since no product was found
-            if (file_exists($temp_file_path)) {
-                unlink($temp_file_path);
-            }
-            
             $log[] = 'Skipped - no product found for slug: ' . $slug;
             $result['products_not_found']++;
         }
@@ -184,27 +238,39 @@ function update_product_files() {
 
 // Download a file from a URL and return the path to the downloaded file along with its original name
 function download_file($url) {
-    // Use WordPress's HTTP API to download the file
-    $response = wp_remote_get($url, array('timeout' => 180));
+    // Stream to disk (avoids loading large ZIPs into memory)
+    $temp_file_path = tempnam(sys_get_temp_dir(), 'csv_product_updater');
+    if (!$temp_file_path) {
+        return false;
+    }
+
+    $response = wp_remote_get($url, array(
+        'timeout'     => CSV_PRODUCT_UPDATER_HTTP_TIMEOUT,
+        'stream'      => true,
+        'filename'    => $temp_file_path,
+        'redirection' => 5,
+    ));
 
     if (is_wp_error($response)) {
+        if (file_exists($temp_file_path)) {
+            unlink($temp_file_path);
+        }
         return false;
     }
 
     $response_code = wp_remote_retrieve_response_code($response);
     if ($response_code != 200) {
+        if (file_exists($temp_file_path)) {
+            unlink($temp_file_path);
+        }
         return false;
     }
 
-    // Get the body of the response
-    $body = wp_remote_retrieve_body($response);
-    if (empty($body)) {
-        return false;
-    }
-
-    // Save the file
-    $temp_file_path = tempnam(sys_get_temp_dir(), 'csv_product_updater');
-    if (file_put_contents($temp_file_path, $body) === false) {
+    // Ensure the file was written
+    if (!file_exists($temp_file_path) || filesize($temp_file_path) <= 0) {
+        if (file_exists($temp_file_path)) {
+            unlink($temp_file_path);
+        }
         return false;
     }
 
@@ -708,7 +774,7 @@ function csv_product_updater_file_exists($file_exists, $file_url) {
     // Allow DigitalOcean Spaces URLs
     if (strpos($file_url, 'digitaloceanspaces.com') !== false) {
         // For CDN URLs, we'll check if the URL is accessible
-        $response = wp_remote_head($file_url, array('timeout' => 5));
+        $response = wp_remote_head($file_url, array('timeout' => CSV_PRODUCT_UPDATER_HTTP_TIMEOUT));
         if (!is_wp_error($response)) {
             $response_code = wp_remote_retrieve_response_code($response);
             $file_exists = ($response_code == 200);

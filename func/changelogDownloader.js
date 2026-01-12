@@ -228,7 +228,7 @@ async function downloadFromChangelog(options = {}) {
         
         // Normalize start date (midnight) and build a max-5-day window (or up to today)
         const DAY_MS = 24 * 60 * 60 * 1000;
-        const MAX_DAYS_PER_RUN = 5;
+        const MAX_DAYS_PER_RUN = 1;
         const startDate = new Date(date);
         const startTimestamp = new Date(
             startDate.getFullYear(),
