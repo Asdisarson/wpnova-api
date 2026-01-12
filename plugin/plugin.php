@@ -13,6 +13,14 @@ if (!defined('CSV_PRODUCT_UPDATER_HTTP_TIMEOUT')) {
     define('CSV_PRODUCT_UPDATER_HTTP_TIMEOUT', defined('MINUTE_IN_SECONDS') ? 15 * MINUTE_IN_SECONDS : 900);
 }
 
+// Faster/safer defaults for lightweight CDN HEAD checks (these happen during validation/download flows)
+if (!defined('CSV_PRODUCT_UPDATER_CDN_HEAD_TIMEOUT')) {
+    define('CSV_PRODUCT_UPDATER_CDN_HEAD_TIMEOUT', 15);
+}
+if (!defined('CSV_PRODUCT_UPDATER_CDN_HEAD_CACHE_TTL')) {
+    define('CSV_PRODUCT_UPDATER_CDN_HEAD_CACHE_TTL', defined('MINUTE_IN_SECONDS') ? 10 * MINUTE_IN_SECONDS : 600);
+}
+
 // Register activation hook
 register_activation_hook(__FILE__, 'csv_product_updater_activation');
 register_activation_hook(__FILE__, 'csv_product_updater_refresh_activation');
@@ -71,16 +79,28 @@ function csv_product_updater_deactivation() {
 // Hook into the daily event
 add_action('csv_product_updater_daily_event', 'update_product_files');
 
-function update_product_files() {
+function update_product_files($options = array()) {
+    $force_update = false;
+    if (is_bool($options)) {
+        // Back-compat if called as update_product_files(true)
+        $force_update = $options;
+    } elseif (is_array($options) && isset($options['force_update'])) {
+        $force_update = (bool) $options['force_update'];
+    }
+
     $csv_file_url = FETCH_API_WPNOVA . 'data.csv';
     $log = array();
+    if ($force_update) {
+        $log[] = 'Force update enabled - bypassing up-to-date version checks.';
+    }
     $result = array(
         'start_time' => current_time('mysql'),
         'total_rows' => 0,
         'products_updated' => 0,
         'products_up_to_date' => 0,
         'products_not_found' => 0,
-        'download_failures' => 0
+        'download_failures' => 0,
+        'force_update' => $force_update ? true : false,
     );
 
     // Get CSV data from the URL (WordPress HTTP API)
@@ -157,7 +177,7 @@ function update_product_files() {
         if ($product) {
             $new_version = isset($row[5]) ? trim($row[5]) : ''; // version column
             $existing_version = get_post_meta($product->ID, 'product-version', true);
-            if ($new_version !== '' && (string) $existing_version === (string) $new_version) {
+            if (!$force_update && $new_version !== '' && (string) $existing_version === (string) $new_version) {
                 $log[] = 'Up-to-date - skipped download for product: ' . $slug . ' (ID: ' . $product->ID . ', version: ' . $new_version . ')';
                 $result['products_up_to_date']++;
                 continue;
@@ -432,6 +452,7 @@ function csv_product_updater_admin_page() {
     echo '<form method="post">';
     wp_nonce_field('csv_product_updater_nonce', 'csv_product_updater_nonce_field');
     echo '<input type="submit" name="csv_product_updater_update" value="Update Products" />';
+    echo ' <input type="submit" name="csv_product_updater_force_update" value="Force Update Products" style="background:#ff6b6b;color:#fff;border-color:#ff6b6b;" onclick="return confirm(\'Force Update will re-download and re-attach files even if the version is unchanged. Continue?\');" />';
     echo '<p>Last manual update on: ' . get_option('csv_product_updater_last_updated_date', 'Never') . '</p>';
     echo '</form>';
     
@@ -560,6 +581,13 @@ function csv_product_updater_admin_init() {
         update_option('csv_product_updater_last_updated_date', current_time('mysql'));
 
         update_product_files();
+    }
+
+    if (isset($_POST['csv_product_updater_force_update']) && check_admin_referer('csv_product_updater_nonce', 'csv_product_updater_nonce_field')) {
+        // Set the date of the last update
+        update_option('csv_product_updater_last_updated_date', current_time('mysql'));
+
+        update_product_files(array('force_update' => true));
     }
 
     // Check if the new "Send Refresh Request" button was clicked and verify nonce
@@ -755,6 +783,38 @@ function csv_product_updater_force_redirect_for_cdn($value) {
     if (is_admin() && isset($_POST['action']) && $_POST['action'] === 'editpost') {
         return 'redirect';
     }
+
+    // If a customer is downloading a file that points to DigitalOcean Spaces,
+    // force "redirect" so WooCommerce doesn't proxy the file through PHP.
+    if (!is_admin() && isset($_GET['download_file']) && isset($_GET['key']) && function_exists('wc_get_product')) {
+        $product_id = absint($_GET['download_file']);
+        $download_id = sanitize_text_field(wp_unslash($_GET['key']));
+
+        if ($product_id > 0 && $download_id !== '') {
+            $product = wc_get_product($product_id);
+            if ($product) {
+                $downloads = $product->get_downloads();
+
+                // If the "key" matches the download ID, inspect that file
+                if (isset($downloads[$download_id])) {
+                    $file_url = $downloads[$download_id]->get_file();
+                    if (is_string($file_url) && strpos($file_url, 'digitaloceanspaces.com') !== false) {
+                        return 'redirect';
+                    }
+                } else {
+                    // Fallback: if the product has any Spaces-backed downloads, prefer redirect
+                    foreach ($downloads as $d) {
+                        if (is_object($d) && method_exists($d, 'get_file')) {
+                            $file_url = $d->get_file();
+                            if (is_string($file_url) && strpos($file_url, 'digitaloceanspaces.com') !== false) {
+                                return 'redirect';
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     return $value;
 }
 
@@ -773,13 +833,27 @@ add_filter('woocommerce_downloadable_file_exists', 'csv_product_updater_file_exi
 function csv_product_updater_file_exists($file_exists, $file_url) {
     // Allow DigitalOcean Spaces URLs
     if (strpos($file_url, 'digitaloceanspaces.com') !== false) {
-        // For CDN URLs, we'll check if the URL is accessible
-        $response = wp_remote_head($file_url, array('timeout' => CSV_PRODUCT_UPDATER_HTTP_TIMEOUT));
+        // Cache existence checks so downloads don't incur an extra HEAD call each time
+        $cache_key = 'csv_product_updater_cdn_exists_' . md5($file_url);
+        $cached = get_transient($cache_key);
+        if ($cached !== false) {
+            return ($cached === '1');
+        }
+
+        // For CDN URLs, we'll check if the URL is accessible (short timeout)
+        $response = wp_remote_head($file_url, array(
+            'timeout'     => CSV_PRODUCT_UPDATER_CDN_HEAD_TIMEOUT,
+            'redirection' => 5,
+        ));
         if (!is_wp_error($response)) {
             $response_code = wp_remote_retrieve_response_code($response);
             $file_exists = ($response_code == 200);
-            error_log('CSV Product Updater: CDN file check for ' . $file_url . ' - exists: ' . ($file_exists ? 'yes' : 'no'));
+        } else {
+            // Avoid blocking downloads on transient network issues; let the CDN 404 if needed
+            $file_exists = true;
         }
+
+        set_transient($cache_key, $file_exists ? '1' : '0', CSV_PRODUCT_UPDATER_CDN_HEAD_CACHE_TTL);
     }
     
     // Also check local files if not already found
@@ -854,6 +928,16 @@ function register_data_ready_endpoint() {
 function handle_data_ready_notification($request) {
     // Get parameters from the request
     $params = $request->get_params();
+
+    // Optional force update (bypass up-to-date skip)
+    $force_update = false;
+    if (isset($params['force_update'])) {
+        $force_update = (bool) filter_var($params['force_update'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+        $force_update = ($force_update === null) ? false : $force_update;
+    } elseif (isset($params['force'])) {
+        $force_update = (bool) filter_var($params['force'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+        $force_update = ($force_update === null) ? false : $force_update;
+    }
     
     // No notifications - just log the API trigger silently
     $log_message = sprintf(
@@ -870,7 +954,7 @@ function handle_data_ready_notification($request) {
     update_option('csv_product_updater_last_updated_date', current_time('mysql'));
     
     // Trigger product update process immediately without notification
-    $update_result = update_product_files();
+    $update_result = update_product_files(array('force_update' => $force_update));
     
     // Return success response
     return new WP_REST_Response(array(

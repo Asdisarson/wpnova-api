@@ -37,7 +37,11 @@ const convertJsonToCsv = (jsonData, outputFile, callback) => {
             'filePath',
             'isLocked',
             'isUnlocked',
-            'productURL'
+            'productURL',
+            // Single-product page enrichments (kept at the end so legacy column positions stay stable)
+            'featuredImageUrl',
+            'shortDescription',
+            'description'
         ];
         
         // Get all keys from the data that might not be in our ordered list
@@ -65,7 +69,14 @@ const convertJsonToCsv = (jsonData, outputFile, callback) => {
                 const value = item[header] !== undefined ? item[header] : '';
                 // Escape quotes and wrap fields with commas in quotes
                 if (typeof value === 'string') {
-                    return `"${value.replace(/"/g, '""')}"`;
+                    // IMPORTANT: Keep every CSV row on a single physical line.
+                    // The WordPress plugin currently splits by newlines before parsing CSV, so embedded newlines would break parsing.
+                    const sanitized = value
+                        .replace(/\r\n/g, '\n')
+                        .replace(/\r/g, '\n')
+                        .replace(/\n/g, ' ')
+                        .replace(/"/g, '""');
+                    return `"${sanitized}"`;
                 } else if (value === null) {
                     return '';
                 } else {

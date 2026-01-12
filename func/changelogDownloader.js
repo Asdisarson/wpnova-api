@@ -129,10 +129,12 @@ async function downloadFromChangelog(options = {}) {
     const {
         date = new Date(),
         resultsPerPage = 500,
-        downloadFiles = true
+        downloadFiles = true,
+        fetchProductDetails = true
     } = options;
     
-    const dbPath = path.join(__dirname, 'files.json');
+    // Persist the latest run output at repo root so the API endpoint `/lastUpdate` returns fresh data
+    const dbPath = path.join(__dirname, '..', 'files.json');
     ensureDirectoryExistence(dbPath);
     const db = new JSONdb(dbPath);
     // Only initialize if database is empty, don't clear existing data
@@ -532,6 +534,153 @@ async function downloadFromChangelog(options = {}) {
             const linkStatus = product.downloadLink ? '✅' : '❌';
             console.log(`${index + 1}. ${product.productName} ${linkStatus}`);
         });
+
+        // Build a cache from the previous run to avoid re-scraping unchanged products
+        const previousRecords = Array.isArray(existingData) ? existingData : [];
+        const previousByProductURL = new Map();
+        const previousBySlug = new Map();
+        for (const rec of previousRecords) {
+            if (!rec || typeof rec !== 'object') continue;
+            if (rec.productURL) previousByProductURL.set(rec.productURL, rec);
+            if (rec.slug) previousBySlug.set(rec.slug, rec);
+        }
+
+        // In-run cache to prevent duplicate single-page fetches
+        const detailsCache = new Map();
+
+        const normalizeText = (value) => {
+            return (value ?? '')
+                .toString()
+                .replace(/\s+/g, ' ')
+                .trim();
+        };
+
+        const applyDetails = (item, details) => {
+            if (!details || typeof details !== 'object') return;
+            if (typeof details.description === 'string' && details.description) item.description = details.description;
+            if (typeof details.shortDescription === 'string' && details.shortDescription) item.shortDescription = details.shortDescription;
+            if (typeof details.featuredImageUrl === 'string' && details.featuredImageUrl) item.featuredImageUrl = details.featuredImageUrl;
+        };
+
+        const getPreviousDetailsForItem = (item) => {
+            if (!item || typeof item !== 'object') return null;
+            const prev = (item.productURL && previousByProductURL.get(item.productURL)) || (item.slug && previousBySlug.get(item.slug));
+            if (!prev) return null;
+            if (item.version && prev.version && String(item.version) !== String(prev.version)) return null;
+            const details = {
+                description: normalizeText(prev.description),
+                shortDescription: normalizeText(prev.shortDescription),
+                featuredImageUrl: normalizeText(prev.featuredImageUrl)
+            };
+            if (!details.description && !details.shortDescription && !details.featuredImageUrl) return null;
+            return details;
+        };
+
+        const extractProductDetailsFromCurrentPage = async () => {
+            return await page.evaluate(() => {
+                const normalize = (s) => (s || '').toString().replace(/\s+/g, ' ').trim();
+                const getMeta = (selector) => {
+                    const el = document.querySelector(selector);
+                    return el ? (el.getAttribute('content') || '').trim() : '';
+                };
+                const abs = (u) => {
+                    const raw = (u || '').toString().trim();
+                    if (!raw) return '';
+                    try { return new URL(raw, window.location.href).href; } catch (_) { return raw; }
+                };
+                const pickImgUrl = () => {
+                    const img =
+                        document.querySelector('figure.woocommerce-product-gallery__wrapper img') ||
+                        document.querySelector('.woocommerce-product-gallery__image img') ||
+                        document.querySelector('.woocommerce-product-gallery img') ||
+                        document.querySelector('img.wp-post-image') ||
+                        document.querySelector('img.attachment-shop_single') ||
+                        document.querySelector('img.attachment-woocommerce_single');
+                    if (img) {
+                        const url =
+                            img.getAttribute('data-large_image') ||
+                            img.getAttribute('data-src') ||
+                            img.getAttribute('data-lazy-src') ||
+                            img.getAttribute('data-original') ||
+                            img.currentSrc ||
+                            img.getAttribute('src') ||
+                            '';
+                        if (url) return url;
+                    }
+                    return getMeta('meta[property="og:image"]') || getMeta('meta[name="twitter:image"]') || '';
+                };
+
+                const shortEl =
+                    document.querySelector('.woocommerce-product-details__short-description') ||
+                    document.querySelector('.summary .woocommerce-product-details__short-description') ||
+                    document.querySelector('.product-short-description') ||
+                    document.querySelector('.summary .product-short-description');
+                let shortDescription = normalize(shortEl ? shortEl.textContent : '');
+                if (!shortDescription) {
+                    shortDescription = normalize(getMeta('meta[property="og:description"]') || getMeta('meta[name="description"]'));
+                }
+
+                const descEl =
+                    document.querySelector('#tab-description') ||
+                    document.querySelector('.woocommerce-Tabs-panel--description') ||
+                    document.querySelector('.woocommerce-tabs #tab-description') ||
+                    document.querySelector('div#tab-description') ||
+                    document.querySelector('.product .woocommerce-Tabs-panel');
+                const description = normalize(descEl ? descEl.textContent : '');
+
+                const featuredImageUrl = abs(pickImgUrl());
+
+                return { description, shortDescription, featuredImageUrl };
+            });
+        };
+
+        const ensureProductDetails = async (item) => {
+            if (!fetchProductDetails) return { ok: false, usedCache: false, navigated: false };
+            if (!item || typeof item !== 'object' || !item.productURL) return { ok: false, usedCache: false, navigated: false };
+
+            const needsDetails = () => !item.description || !item.shortDescription || !item.featuredImageUrl;
+            if (!needsDetails()) return { ok: true, usedCache: true, navigated: false };
+
+            let usedCache = false;
+
+            // In-run cache
+            if (detailsCache.has(item.productURL)) {
+                applyDetails(item, detailsCache.get(item.productURL));
+                usedCache = true;
+                if (!needsDetails()) return { ok: true, usedCache: true, navigated: false };
+            }
+
+            // Previous run cache (only if version is unchanged)
+            const prevDetails = getPreviousDetailsForItem(item);
+            if (prevDetails) {
+                detailsCache.set(item.productURL, prevDetails);
+                applyDetails(item, prevDetails);
+                usedCache = true;
+                if (!needsDetails()) return { ok: true, usedCache: true, navigated: false };
+            }
+
+            await persistentSession.navigateWithSession(item.productURL);
+            await delay(randomDelay(750, 1250));
+
+            // Try to open the description tab (some themes lazy-load panels)
+            try {
+                const descTabSelector = 'li.description_tab a, a[href="#tab-description"]';
+                await page.waitForSelector(descTabSelector, { timeout: 2000 });
+                await page.click(descTabSelector);
+                await delay(randomDelay(250, 450));
+            } catch (_) {}
+
+            const raw = await extractProductDetailsFromCurrentPage();
+            const cleaned = {
+                description: normalizeText(raw?.description),
+                shortDescription: normalizeText(raw?.shortDescription),
+                featuredImageUrl: normalizeText(raw?.featuredImageUrl)
+            };
+            detailsCache.set(item.productURL, cleaned);
+            applyDetails(item, cleaned);
+
+            return { ok: true, usedCache, navigated: true };
+        };
         
         // Download files if enabled
         if (downloadFiles) {
@@ -549,6 +698,20 @@ async function downloadFromChangelog(options = {}) {
                 console.log(`Product: ${data[i].productName}`);
                 
                 try {
+                    let onProductPage = false;
+
+                    // Fetch single-product details (description, short description, featured image)
+                    if (fetchProductDetails && data[i].productURL) {
+                        try {
+                            console.log(`🧾 Fetching product details: ${data[i].productURL}`);
+                            const detailResult = await ensureProductDetails(data[i]);
+                            onProductPage = Boolean(detailResult && detailResult.navigated);
+                        } catch (detailError) {
+                            console.log(`⚠️  Failed to fetch product details for ${data[i].productName}: ${detailError.message}`);
+                            data[i].productDetailsError = detailError.message;
+                        }
+                    }
+
                     // If no direct download link, try to construct it from product URL or ID
                     if (!data[i].downloadLink) {
                         // Try to navigate to the product page and find download link
@@ -556,10 +719,12 @@ async function downloadFromChangelog(options = {}) {
                             console.log(`🔍 No direct download link, checking product page: ${data[i].productURL}`);
 
                             // Use persistent session navigation (maintains login state automatically)
-                            await persistentSession.navigateWithSession(data[i].productURL);
-
-                            // Wait for potential download button elements to load
-                            await delay(randomDelay(750, 1250));
+                            if (!onProductPage) {
+                                await persistentSession.navigateWithSession(data[i].productURL);
+                                onProductPage = true;
+                                // Wait for potential download button elements to load
+                                await delay(randomDelay(750, 1250));
+                            }
 
                             // Look for download button/link on product page
                             const downloadLinkFromPage = await page.evaluate(() => {
@@ -645,7 +810,21 @@ async function downloadFromChangelog(options = {}) {
             console.log(`✅ Successfully downloaded: ${fileCounter} files`);
             console.log(`❌ Failed downloads: ${errorCounter} files`);
         } else {
-            // If not downloading, just return the product data
+            // If not downloading, optionally enrich with details and return the product data
+            if (fetchProductDetails) {
+                console.log('\n🧾 Fetching product details from single pages...');
+                for (let i = 0; i < data.length; i++) {
+                    if (!data[i]?.productURL) continue;
+                    try {
+                        console.log(`🧾 [${i + 1}/${data.length}] ${data[i].productName}`);
+                        await ensureProductDetails(data[i]);
+                    } catch (detailError) {
+                        console.log(`⚠️  Failed to fetch product details for ${data[i].productName}: ${detailError.message}`);
+                        data[i].productDetailsError = detailError.message;
+                    }
+                    await delay(randomDelay(350, 650));
+                }
+            }
             list = data;
         }
         
