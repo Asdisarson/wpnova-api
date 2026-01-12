@@ -226,7 +226,9 @@ async function downloadFromChangelog(options = {}) {
         
         console.log(`✅ Changelog table data loaded with ${rowCount} total rows`);
         
-        // Normalize start date (midnight) and log range
+        // Normalize start date (midnight) and build a max-5-day window (or up to today)
+        const DAY_MS = 24 * 60 * 60 * 1000;
+        const MAX_DAYS_PER_RUN = 5;
         const startDate = new Date(date);
         const startTimestamp = new Date(
             startDate.getFullYear(),
@@ -238,12 +240,25 @@ async function downloadFromChangelog(options = {}) {
             month: 'long',
             day: 'numeric',
         });
-        console.log(`📅 Collecting products from ${startDateLabel} through today`);
+        const today = new Date();
+        const endOfTodayTimestamp = new Date(
+            today.getFullYear(),
+            today.getMonth(),
+            today.getDate() + 1
+        ).getTime();
+        const maxWindowEndTimestamp = startTimestamp + (MAX_DAYS_PER_RUN * DAY_MS);
+        const endTimestampExclusive = Math.min(maxWindowEndTimestamp, endOfTodayTimestamp);
+        const endDateLabel = new Date(endTimestampExclusive - 1).toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+        });
+        console.log(`📅 Collecting products from ${startDateLabel} through ${endDateLabel} (max ${MAX_DAYS_PER_RUN} days)`);
         
         // Helper to extract product data from the current changelog page (HTML 4 table structure)
-        // Returns items on/after start date and whether older dates were encountered (so we can stop paginating)
+        // Returns items within [startTs, endTsExclusive) and whether older dates were encountered (so we can stop paginating)
         const extractProductsSince = async () => {
-            return await page.evaluate((startTs) => {
+            return await page.evaluate((startTs, endTsExclusive) => {
             const rows = document.querySelectorAll('tr.awcpt-row');
             const rowDataArray = [];
             let reachedOlder = false;
@@ -252,8 +267,8 @@ async function downloadFromChangelog(options = {}) {
                 const cells = row.querySelectorAll('td');
                 
                 // Get date from appropriate cell
-                const date = row.querySelector('.awcpt-date')?.innerText || 
-                            row.querySelector('td[class*="date"]')?.innerText;
+                const date = (row.querySelector('.awcpt-date')?.innerText || 
+                            row.querySelector('td[class*="date"]')?.innerText || '').trim();
                 
                 // Parse date and decide whether to include
                 let rowTime = null;
@@ -269,8 +284,12 @@ async function downloadFromChangelog(options = {}) {
                     reachedOlder = true;
                     continue;
                 }
+                if (rowTime && rowTime >= endTsExclusive) {
+                    // Too new for this window
+                    continue;
+                }
                 
-                if (rowTime && rowTime >= startTs) {
+                if (rowTime && rowTime >= startTs && rowTime < endTsExclusive) {
                 
                     const id = row.getAttribute('data-id') || row.id;
                     
@@ -360,7 +379,7 @@ async function downloadFromChangelog(options = {}) {
             }
             
             return { items: rowDataArray, reachedOlder };
-        }, startTimestamp);
+        }, startTimestamp, endTimestampExclusive);
         };
         
         const maxPagesToScan = 5;
