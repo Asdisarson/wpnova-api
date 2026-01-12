@@ -13,6 +13,11 @@ if (!defined('CSV_PRODUCT_UPDATER_HTTP_TIMEOUT')) {
     define('CSV_PRODUCT_UPDATER_HTTP_TIMEOUT', defined('MINUTE_IN_SECONDS') ? 15 * MINUTE_IN_SECONDS : 900);
 }
 
+// Default price applied ONLY to newly created products (does not modify existing products)
+if (!defined('CSV_PRODUCT_UPDATER_CREATED_PRODUCT_PRICE')) {
+    define('CSV_PRODUCT_UPDATER_CREATED_PRODUCT_PRICE', '5.99');
+}
+
 // Faster/safer defaults for lightweight CDN HEAD checks (these happen during validation/download flows)
 if (!defined('CSV_PRODUCT_UPDATER_CDN_HEAD_TIMEOUT')) {
     define('CSV_PRODUCT_UPDATER_CDN_HEAD_TIMEOUT', 15);
@@ -79,6 +84,201 @@ function csv_product_updater_deactivation() {
 // Hook into the daily event
 add_action('csv_product_updater_daily_event', 'update_product_files');
 
+/**
+ * Safely get a value from a CSV row by index.
+ */
+function csv_product_updater_row_value($row, $index, $default = '') {
+    if (!is_array($row) || !isset($row[$index])) {
+        return $default;
+    }
+    $value = $row[$index];
+    if (is_string($value)) {
+        return trim($value);
+    }
+    return $value;
+}
+
+/**
+ * Find a product by its slug (post_name) or by a stored "source slug" meta fallback.
+ * This prevents duplicate products if WordPress had to modify the slug to keep it unique.
+ *
+ * @param string $slug
+ * @return WP_Post|null
+ */
+function csv_product_updater_find_product($slug) {
+    $slug = sanitize_title((string) $slug);
+    if ($slug === '') {
+        return null;
+    }
+
+    // Primary lookup by path (fast)
+    $product = get_page_by_path($slug, OBJECT, 'product');
+    if ($product instanceof WP_Post) {
+        return $product;
+    }
+
+    // Secondary lookup by exact slug across any status
+    $query = new WP_Query(array(
+        'post_type'      => 'product',
+        'name'           => $slug,
+        'posts_per_page' => 1,
+        'post_status'    => 'any',
+        'no_found_rows'  => true,
+    ));
+    if ($query->have_posts()) {
+        $product = $query->posts[0];
+        wp_reset_postdata();
+        return $product instanceof WP_Post ? $product : null;
+    }
+    wp_reset_postdata();
+
+    // Fallback: find by stored original/source slug meta
+    $query = new WP_Query(array(
+        'post_type'      => 'product',
+        'posts_per_page' => 1,
+        'post_status'    => 'any',
+        'no_found_rows'  => true,
+        'meta_query'     => array(
+            array(
+                'key'     => '_csv_product_updater_source_slug',
+                'value'   => $slug,
+                'compare' => '=',
+            ),
+        ),
+    ));
+    if ($query->have_posts()) {
+        $product = $query->posts[0];
+        wp_reset_postdata();
+        return $product instanceof WP_Post ? $product : null;
+    }
+    wp_reset_postdata();
+
+    return null;
+}
+
+/**
+ * Create a WooCommerce product from a CSV row.
+ *
+ * Expected CSV indices (based on Node generator):
+ * - 1: productName
+ * - 3: name (version stripped)
+ * - 7: slug
+ * - 14: featuredImageUrl
+ * - 15: shortDescription
+ * - 16: description
+ *
+ * @param array $row
+ * @param string $slug
+ * @param array $log
+ * @return int|WP_Error Product ID on success
+ */
+function csv_product_updater_create_product_from_row($row, $slug, &$log) {
+    $slug = sanitize_title((string) $slug);
+    if ($slug === '') {
+        return new WP_Error('csv_product_updater_invalid_slug', 'Empty/invalid slug');
+    }
+
+    $default_price = (string) CSV_PRODUCT_UPDATER_CREATED_PRODUCT_PRICE;
+
+    // Title preference: "name" column (no version) > productName > slug-derived
+    $title = (string) csv_product_updater_row_value($row, 3, '');
+    if ($title === '') {
+        $title = (string) csv_product_updater_row_value($row, 1, '');
+    }
+    if ($title === '') {
+        $title = ucwords(str_replace('-', ' ', $slug));
+    }
+    $title = wp_strip_all_tags($title);
+
+    $description        = (string) csv_product_updater_row_value($row, 16, '');
+    $short_description  = (string) csv_product_updater_row_value($row, 15, '');
+    $featured_image_url = (string) csv_product_updater_row_value($row, 14, '');
+
+    $product_id = 0;
+
+    if (class_exists('WC_Product_Simple')) {
+        $product = new WC_Product_Simple();
+        $product->set_name($title);
+        $product->set_slug($slug);
+        $product->set_status('publish');
+        $product->set_downloadable(true);
+        $product->set_virtual(true);
+        $product->set_regular_price($default_price);
+        if (method_exists($product, 'set_price')) {
+            $product->set_price($default_price);
+        }
+
+        if ($description !== '') {
+            $product->set_description(wp_kses_post($description));
+        }
+        if ($short_description !== '') {
+            $product->set_short_description(wp_kses_post($short_description));
+        }
+
+        $product->save();
+        $product_id = (int) $product->get_id();
+    } else {
+        // Fallback (should rarely happen): create the product post directly
+        $postarr = array(
+            'post_title'   => $title,
+            'post_name'    => $slug,
+            'post_status'  => 'publish',
+            'post_type'    => 'product',
+            'post_content' => $description !== '' ? wp_kses_post($description) : '',
+            'post_excerpt' => $short_description !== '' ? wp_kses_post($short_description) : '',
+        );
+        $inserted = wp_insert_post($postarr, true);
+        if (is_wp_error($inserted)) {
+            return $inserted;
+        }
+        $product_id = (int) $inserted;
+
+        // Price meta for fallback path (WooCommerce will also sync these later)
+        update_post_meta($product_id, '_regular_price', $default_price);
+        update_post_meta($product_id, '_sale_price', '');
+        update_post_meta($product_id, '_price', $default_price);
+    }
+
+    if ($product_id <= 0) {
+        return new WP_Error('csv_product_updater_create_failed', 'Failed to create product');
+    }
+
+    // Ensure product type taxonomy is set
+    try {
+        wp_set_object_terms($product_id, 'simple', 'product_type');
+    } catch (Exception $e) {
+        // ignore
+    }
+
+    // Store a stable "source slug" for future lookups, even if WP had to modify post_name
+    update_post_meta($product_id, '_csv_product_updater_source_slug', $slug);
+
+    // If WordPress changed the slug due to a conflict, log it (updates will still find by meta)
+    $actual_slug = (string) get_post_field('post_name', $product_id);
+    if ($actual_slug !== '' && $actual_slug !== $slug) {
+        $log[] = 'Created product but WordPress modified slug from "' . $slug . '" to "' . $actual_slug . '" (ID: ' . $product_id . '). Using meta fallback for future updates.';
+    }
+
+    // Set featured image (best-effort) only if provided and product has no thumbnail yet
+    if ($featured_image_url !== '' && filter_var($featured_image_url, FILTER_VALIDATE_URL)) {
+        if (function_exists('has_post_thumbnail') && !has_post_thumbnail($product_id)) {
+            require_once(ABSPATH . 'wp-admin/includes/file.php');
+            require_once(ABSPATH . 'wp-admin/includes/media.php');
+            require_once(ABSPATH . 'wp-admin/includes/image.php');
+
+            $attachment_id = media_sideload_image($featured_image_url, $product_id, $title, 'id');
+            if (is_wp_error($attachment_id)) {
+                $log[] = 'Failed to sideload featured image for product ' . $slug . ' (ID: ' . $product_id . '): ' . $attachment_id->get_error_message();
+            } else {
+                set_post_thumbnail($product_id, (int) $attachment_id);
+                $log[] = 'Set featured image for product ' . $slug . ' (ID: ' . $product_id . ')';
+            }
+        }
+    }
+
+    return $product_id;
+}
+
 function update_product_files($options = array()) {
     $force_update = false;
     if (is_bool($options)) {
@@ -98,6 +298,7 @@ function update_product_files($options = array()) {
         'total_rows' => 0,
         'products_updated' => 0,
         'products_up_to_date' => 0,
+        'products_created' => 0,
         'products_not_found' => 0,
         'download_failures' => 0,
         'force_update' => $force_update ? true : false,
@@ -149,28 +350,32 @@ function update_product_files($options = array()) {
     // Iterate over each row of the CSV data
     foreach ($csv_data as $row) {
         // Extract the slug early so we don't download files for missing products
-        $slug = isset($row[7]) ? trim($row[7]) : '';  // slug column
+        $slug = isset($row[7]) ? sanitize_title(trim($row[7])) : '';  // slug column
         if ($slug === '') {
             $log[] = 'Skipped row - empty slug';
             continue;
         }
 
-        // Find a product that matches the slug
-        $product = get_page_by_path($slug, OBJECT, 'product');
-        
-        // If not found by path, try WP_Query with exact slug match
+        // Find a product that matches the slug (with meta fallback)
+        $product = csv_product_updater_find_product($slug);
+
+        // Create missing products on-the-fly
         if (!$product) {
-            $args = array(
-                'post_type' => 'product',
-                'name' => $slug,
-                'posts_per_page' => 1,
-                'post_status' => 'publish'
-            );
-            $query = new WP_Query($args);
-            if ($query->have_posts()) {
-                $product = $query->posts[0];
+            $created_id = csv_product_updater_create_product_from_row($row, $slug, $log);
+            if (is_wp_error($created_id)) {
+                $log[] = 'Failed to create product for slug: ' . $slug . ' - ' . $created_id->get_error_message();
+                $result['products_not_found']++;
+                continue;
             }
-            wp_reset_postdata();
+            $product = get_post((int) $created_id);
+            if ($product instanceof WP_Post) {
+                $log[] = 'Created product: ' . $slug . ' (ID: ' . $product->ID . ')';
+                $result['products_created']++;
+            } else {
+                $log[] = 'Failed to load newly created product for slug: ' . $slug;
+                $result['products_not_found']++;
+                continue;
+            }
         }
 
         // If a matching product was found, update its file (only if version changed)
@@ -239,9 +444,6 @@ function update_product_files($options = array()) {
                 $log[] = 'Failed to update files for product: ' . $slug . ' (ID: ' . $product->ID . ')';
                 $result['download_failures']++;
             }
-        } else {
-            $log[] = 'Skipped - no product found for slug: ' . $slug;
-            $result['products_not_found']++;
         }
     }
 
