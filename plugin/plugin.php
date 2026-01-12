@@ -1711,6 +1711,7 @@ function csv_product_updater_admin_page() {
         'csv_product_updater_last_refresh_requested_at',
         get_option('csv_product_updater_last_refresh_date', 'Never')
     );
+    $backfill_enabled_default = (string) get_option('csv_product_updater_refresh_backfill_enabled', '1') === '1';
 
     echo '<form method="post" style="margin-top:20px;">';
     wp_nonce_field('csv_product_refresh_nonce', 'csv_product_refresh_nonce_field');
@@ -1718,7 +1719,8 @@ function csv_product_updater_admin_page() {
     echo '<input type="date" id="csv_product_updater_date" name="csv_product_updater_date" value="' . esc_attr($last_refresh_date_value) . '" />';
     echo '<input type="submit" name="csv_product_updater_send_refresh" value="Send Refresh Request" />';
     echo ' <label style="margin-left:10px;"><input type="checkbox" name="csv_product_updater_refresh_force_update" value="1" /> Force update products</label>';
-    echo '<p style="margin:6px 0 0 0; color:#666;">This will refresh from the start date through today (max ' . (int) CSV_PRODUCT_UPDATER_REFRESH_QUEUE_MAX_DAYS . ' days).</p>';
+    echo ' <label style="margin-left:10px;"><input type="checkbox" name="csv_product_updater_refresh_backfill_enabled" value="1" ' . ($backfill_enabled_default ? 'checked' : '') . ' /> Backfill until today</label>';
+    echo '<p style="margin:6px 0 0 0; color:#666;">If enabled, it refreshes from the start date through today (max ' . (int) CSV_PRODUCT_UPDATER_REFRESH_QUEUE_MAX_DAYS . ' days). If disabled, it refreshes only the selected date.</p>';
     echo '<p>Last refresh request sent at: ' . esc_html($last_refresh_requested_at) . '</p>';
     echo '</form>';
 
@@ -1823,18 +1825,45 @@ function csv_product_updater_admin_init() {
 
         // Force update (propagates to the API which then triggers WP update with force_update)
         $force_refresh_update = isset($_POST['csv_product_updater_refresh_force_update']) && (string) $_POST['csv_product_updater_refresh_force_update'] === '1';
+        $backfill_enabled = isset($_POST['csv_product_updater_refresh_backfill_enabled']) && (string) $_POST['csv_product_updater_refresh_backfill_enabled'] === '1';
+        update_option('csv_product_updater_refresh_backfill_enabled', $backfill_enabled ? '1' : '0', false);
 
         // Store selected date for the date input, and store request time for display
         update_option('csv_product_updater_last_refresh_date', $selected_date, false);
         update_option('csv_product_updater_last_refresh_requested_at', current_time('mysql'), false);
 
-        // Start backfill refresh queue (start date -> today)
-        $queue = csv_product_updater_start_refresh_queue($selected_date, $force_refresh_update, 'admin_form');
-        if (is_wp_error($queue)) {
+        if ($backfill_enabled) {
+            // Start backfill refresh queue (start date -> today)
+            $queue = csv_product_updater_start_refresh_queue($selected_date, $force_refresh_update, 'admin_form');
+            if (is_wp_error($queue)) {
+                $log = get_option('csv_product_updater_log', array());
+                if (!is_array($log)) $log = array();
+                array_unshift($log, 'Backfill refresh failed to start: ' . $queue->get_error_message());
+                csv_product_updater_save_log($log);
+            }
+        } else {
+            // Single-day refresh (selected date only)
             $log = get_option('csv_product_updater_log', array());
             if (!is_array($log)) $log = array();
-            array_unshift($log, 'Backfill refresh failed to start: ' . $queue->get_error_message());
+            array_unshift($log, 'Single-day refresh requested for ' . $selected_date . ' (force=' . ($force_refresh_update ? 'true' : 'false') . ')');
             csv_product_updater_save_log($log);
+
+            $response = send_refresh_request($selected_date, $force_refresh_update);
+            if (is_wp_error($response)) {
+                $log = get_option('csv_product_updater_log', array());
+                if (!is_array($log)) $log = array();
+                array_unshift($log, 'Single-day refresh failed: ' . $response->get_error_message());
+                csv_product_updater_save_log($log);
+            } else {
+                $code = wp_remote_retrieve_response_code($response);
+                $log = get_option('csv_product_updater_log', array());
+                if (!is_array($log)) $log = array();
+                array_unshift($log, 'Single-day refresh complete for ' . $selected_date . ' (HTTP ' . $code . '). Starting update job...');
+                csv_product_updater_save_log($log);
+
+                // Best-effort: start update job now (webhook may also start it)
+                csv_product_updater_start_job($force_refresh_update, 'refresh_single_day');
+            }
         }
 
         wp_safe_redirect(menu_page_url('csv-product-updater', false));
