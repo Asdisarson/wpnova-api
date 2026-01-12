@@ -445,22 +445,6 @@ async function downloadFromChangelog(options = {}) {
         
         console.log(`📊 Found ${data.length} products in changelog`);
         
-        // Deduplicate to avoid redundant downloads/work
-        const deduped = [];
-        const seen = new Set();
-        data.forEach(item => {
-            const key = [item.id, item.slug, item.productURL, item.productName].filter(Boolean).join('|');
-            if (!key) return;
-            if (seen.has(key)) {
-                log('dedupe', `Skipping duplicate entry: ${item.productName || item.id}`);
-                return;
-            }
-            seen.add(key);
-            deduped.push(item);
-        });
-        data = deduped;
-        log('dedupe', `Remaining after dedupe: ${data.length}`);
-        
         // Skip products that mention "lifetime" in the name
         const containsLifetime = (productName = '') => productName.toLowerCase().includes('lifetime');
         const lifetimeSkipped = data.filter(item => containsLifetime(item.productName));
