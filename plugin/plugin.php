@@ -331,6 +331,42 @@ function csv_product_updater_start_refresh_queue($start_date, $force_update = fa
 }
 
 /**
+ * Stop/cancel the running refresh backfill queue.
+ *
+ * @param string $source
+ * @return array Updated state
+ */
+function csv_product_updater_stop_refresh_queue($source = 'admin_form') {
+    $state = csv_product_updater_get_refresh_queue_state();
+    if (!is_array($state) || empty($state)) {
+        $state = array();
+    }
+
+    if (!isset($state['status']) || $state['status'] !== 'running') {
+        return $state;
+    }
+
+    $state['status'] = 'stopped';
+    $state['stopped_at'] = current_time('mysql');
+    $state['updated_at'] = current_time('mysql');
+    $state['last_message'] = 'Backfill refresh stopped by user.';
+    $state['last_error'] = '';
+    $state['source_stop'] = (string) $source;
+    csv_product_updater_save_refresh_queue_state($state);
+
+    // Prevent any further queue processing
+    wp_clear_scheduled_hook('csv_product_updater_process_refresh_queue_event');
+
+    // Log
+    $log = get_option('csv_product_updater_log', array());
+    if (!is_array($log)) $log = array();
+    array_unshift($log, 'Backfill refresh stopped at ' . $state['stopped_at']);
+    csv_product_updater_save_log($log);
+
+    return $state;
+}
+
+/**
  * WP-Cron runner: process one day in the refresh backfill queue.
  *
  * It waits for the product update job to finish before moving to the next day.
@@ -1710,6 +1746,13 @@ function csv_product_updater_admin_page() {
         if ($q_err) {
             echo '<p style="color:#b32d2e;">Error: ' . esc_html($q_err) . '</p>';
         }
+
+        if ($q_status === 'running') {
+            echo '<form method="post" style="margin-top:10px;">';
+            wp_nonce_field('csv_product_refresh_queue_stop_nonce', 'csv_product_refresh_queue_stop_nonce_field');
+            echo '<input type="submit" name="csv_product_updater_stop_refresh_queue" value="Stop Backfill" class="button" onclick="return confirm(\'Stop the backfill refresh queue?\');" />';
+            echo '</form>';
+        }
         echo '</div>';
     }
 
@@ -1746,6 +1789,12 @@ function csv_product_updater_admin_init() {
     if (isset($_POST['csv_product_updater_clear_log']) && check_admin_referer('csv_product_clear_log_nonce', 'csv_product_clear_log_nonce_field')) {
         update_option('csv_product_updater_log', array(), false);
         // Keep the UI clean: do not erase job state, just the log
+        wp_safe_redirect(menu_page_url('csv-product-updater', false));
+        exit;
+    }
+
+    if (isset($_POST['csv_product_updater_stop_refresh_queue']) && check_admin_referer('csv_product_refresh_queue_stop_nonce', 'csv_product_refresh_queue_stop_nonce_field')) {
+        csv_product_updater_stop_refresh_queue('admin_form');
         wp_safe_redirect(menu_page_url('csv-product-updater', false));
         exit;
     }
