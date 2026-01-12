@@ -213,15 +213,29 @@ const scheduledTask = async () => {
                     let slug = '';
                     let productId = '';
                     try {
-                        let version = text.match(/v\d+(\.\d+){0,3}/)[0];
+                        // Support versions like "v6.2.0.0" and also "4.1.2" (no leading v)
+                        const versionMatch =
+                            text.match(/\bv\d+(?:\.\d+){0,4}\b/i) ||
+                            text.match(/\b\d+\.\d+(?:\.\d+){0,3}\b/) ||
+                            // Also allow single-number versions like "Product Name 4" (only if at end)
+                            text.match(/\b\d{1,4}\b(?=\s*[\)\]]?\s*$)/);
 
-                        // Remove 'v' from version
-                        versionWithoutV = version.replace('v', '');
-                        // Remove version from title
-                        textWithoutVersion = text.replace(/ v\d+(\.\d+){0,3}/, '');
+                        if (versionMatch) {
+                            const version = versionMatch[0];
+                            versionWithoutV = version.replace(/^v/i, '');
+                            textWithoutVersion = text
+                                .replace(version, '')
+                                .replace(/\s+/g, ' ')
+                                .trim();
+                        } else {
+                            versionWithoutV = '';
+                            textWithoutVersion = text;
+                        }
 
                     } catch (e) {
                         console.log(e);
+                        versionWithoutV = '';
+                        textWithoutVersion = text;
                     }
                     url = data[i].productURL;
                     try {

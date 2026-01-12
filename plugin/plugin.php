@@ -7,7 +7,7 @@ Author: WP NOVA
 */
 
 define('FETCH_API_WPNOVA', 'https://seashell-app-duvll.ondigitalocean.app/');
-
+define('WPNOVA_WEBHOOK_SECRET', '2T1pINQJL3g6WGcf8d0d58cf4fd8b26cf7dd2bfafd87da46d');
 // 15 minutes (in seconds) for all network calls made by this plugin
 if (!defined('CSV_PRODUCT_UPDATER_HTTP_TIMEOUT')) {
     define('CSV_PRODUCT_UPDATER_HTTP_TIMEOUT', defined('MINUTE_IN_SECONDS') ? 15 * MINUTE_IN_SECONDS : 900);
@@ -82,7 +82,29 @@ function csv_product_updater_deactivation() {
 }
 
 // Hook into the daily event
-add_action('csv_product_updater_daily_event', 'update_product_files');
+add_action('csv_product_updater_daily_event', 'csv_product_updater_daily_event_handler');
+
+// Background batch processor hook
+add_action('csv_product_updater_process_batch_event', 'csv_product_updater_process_batch');
+
+// Batch size for background updates (keep low to avoid timeouts; each row may download a ZIP)
+if (!defined('CSV_PRODUCT_UPDATER_BATCH_SIZE')) {
+    define('CSV_PRODUCT_UPDATER_BATCH_SIZE', 1);
+}
+
+// Option/transient keys for background job state
+if (!defined('CSV_PRODUCT_UPDATER_JOB_STATE_OPTION')) {
+    define('CSV_PRODUCT_UPDATER_JOB_STATE_OPTION', 'csv_product_updater_job_state');
+}
+if (!defined('CSV_PRODUCT_UPDATER_STOP_OPTION')) {
+    define('CSV_PRODUCT_UPDATER_STOP_OPTION', 'csv_product_updater_stop_requested');
+}
+if (!defined('CSV_PRODUCT_UPDATER_JOB_LOCK_TRANSIENT')) {
+    define('CSV_PRODUCT_UPDATER_JOB_LOCK_TRANSIENT', 'csv_product_updater_job_lock');
+}
+if (!defined('CSV_PRODUCT_UPDATER_JOB_LOCK_TTL')) {
+    define('CSV_PRODUCT_UPDATER_JOB_LOCK_TTL', defined('MINUTE_IN_SECONDS') ? 5 * MINUTE_IN_SECONDS : 300);
+}
 
 /**
  * Safely get a value from a CSV row by index.
@@ -279,6 +301,424 @@ function csv_product_updater_create_product_from_row($row, $slug, &$log) {
     return $product_id;
 }
 
+/**
+ * Get the current job state (background updater).
+ *
+ * @return array
+ */
+function csv_product_updater_get_job_state() {
+    $state = get_option(CSV_PRODUCT_UPDATER_JOB_STATE_OPTION, array());
+    return is_array($state) ? $state : array();
+}
+
+/**
+ * Save job state (non-autoload).
+ */
+function csv_product_updater_save_job_state($state) {
+    if (!is_array($state)) {
+        $state = array();
+    }
+    // Prevent autoloading large state on every request
+    update_option(CSV_PRODUCT_UPDATER_JOB_STATE_OPTION, $state, false);
+}
+
+function csv_product_updater_is_stop_requested() {
+    return (bool) get_option(CSV_PRODUCT_UPDATER_STOP_OPTION, false);
+}
+
+function csv_product_updater_request_stop() {
+    update_option(CSV_PRODUCT_UPDATER_STOP_OPTION, true, false);
+}
+
+function csv_product_updater_clear_stop() {
+    delete_option(CSV_PRODUCT_UPDATER_STOP_OPTION);
+}
+
+function csv_product_updater_acquire_lock() {
+    if (get_transient(CSV_PRODUCT_UPDATER_JOB_LOCK_TRANSIENT)) {
+        return false;
+    }
+    set_transient(CSV_PRODUCT_UPDATER_JOB_LOCK_TRANSIENT, '1', CSV_PRODUCT_UPDATER_JOB_LOCK_TTL);
+    return true;
+}
+
+function csv_product_updater_release_lock() {
+    delete_transient(CSV_PRODUCT_UPDATER_JOB_LOCK_TRANSIENT);
+}
+
+/**
+ * Fetch and parse the remote CSV into rows (without header row).
+ *
+ * @param string $csv_file_url
+ * @param array  $log
+ * @return array|WP_Error
+ */
+function csv_product_updater_fetch_csv_rows($csv_file_url, &$log) {
+    $csv_response = wp_remote_get($csv_file_url, array(
+        'timeout'     => CSV_PRODUCT_UPDATER_HTTP_TIMEOUT,
+        'redirection' => 5,
+    ));
+
+    if (is_wp_error($csv_response)) {
+        return new WP_Error('csv_fetch_failed', 'Failed to fetch CSV data from ' . $csv_file_url . ' - ' . $csv_response->get_error_message());
+    }
+
+    $csv_response_code = wp_remote_retrieve_response_code($csv_response);
+    if ($csv_response_code != 200) {
+        return new WP_Error('csv_fetch_failed', 'Failed to fetch CSV data from ' . $csv_file_url . ' - HTTP ' . $csv_response_code);
+    }
+
+    $csv_body = wp_remote_retrieve_body($csv_response);
+    if (!is_string($csv_body) || trim($csv_body) === '') {
+        return new WP_Error('csv_fetch_failed', 'Failed to fetch CSV data from ' . $csv_file_url . ' - empty body');
+    }
+
+    $csv_lines = preg_split("/\r\n|\n|\r/", trim($csv_body));
+    $csv_data = array_map('str_getcsv', $csv_lines);
+    array_shift($csv_data); // Remove header row
+
+    // Filter out any empty lines that parsed as a single empty column
+    $csv_data = array_values(array_filter($csv_data, function($row) {
+        return is_array($row) && !(count($row) === 1 && trim((string) $row[0]) === '');
+    }));
+
+    return $csv_data;
+}
+
+/**
+ * Process a single CSV row (shared by sync and background modes).
+ *
+ * @param array $row
+ * @param bool  $force_update
+ * @param array $result
+ * @param array $log
+ * @return void
+ */
+function csv_product_updater_process_row($row, $force_update, &$result, &$log) {
+    $slug = sanitize_title((string) csv_product_updater_row_value($row, 7, '')); // slug column
+    if ($slug === '') {
+        $log[] = 'Skipped row - empty slug';
+        return;
+    }
+
+    // Find a product that matches the slug (with meta fallback)
+    $product = csv_product_updater_find_product($slug);
+
+    // Create missing products on-the-fly
+    if (!$product) {
+        $created_id = csv_product_updater_create_product_from_row($row, $slug, $log);
+        if (is_wp_error($created_id)) {
+            $log[] = 'Failed to create product for slug: ' . $slug . ' - ' . $created_id->get_error_message();
+            $result['products_not_found']++;
+            return;
+        }
+        $product = get_post((int) $created_id);
+        if ($product instanceof WP_Post) {
+            $log[] = 'Created product: ' . $slug . ' (ID: ' . $product->ID . ')';
+            $result['products_created']++;
+        } else {
+            $log[] = 'Failed to load newly created product for slug: ' . $slug;
+            $result['products_not_found']++;
+            return;
+        }
+    }
+
+    $new_version = (string) csv_product_updater_row_value($row, 5, ''); // version column
+    $existing_version = get_post_meta($product->ID, 'product-version', true);
+    if (!$force_update && $new_version !== '' && (string) $existing_version === (string) $new_version) {
+        $log[] = 'Up-to-date - skipped download for product: ' . $slug . ' (ID: ' . $product->ID . ', version: ' . $new_version . ')';
+        $result['products_up_to_date']++;
+        return;
+    }
+
+    // Extract the file URL
+    $file_url = (string) csv_product_updater_row_value($row, 8, ''); // fileUrl column
+    // Ensure no double slashes when concatenating
+    $file_url = rtrim(FETCH_API_WPNOVA, '/') . '/' . ltrim($file_url, '/');
+
+    if (filter_var($file_url, FILTER_VALIDATE_URL) === false) {
+        $log[] = 'Invalid file URL: ' . $file_url;
+        $result['download_failures']++;
+        return;
+    }
+
+    $download_result = download_file($file_url);
+    if ($download_result === false || !is_array($download_result)) {
+        $log[] = 'Failed to download file from URL: ' . $file_url;
+        $result['download_failures']++;
+        return;
+    }
+
+    list($temp_file_path, $original_file_name) = $download_result;
+
+    $download_file_name = basename(parse_url($file_url, PHP_URL_PATH));
+    $download_file_name = sanitize_file_name($download_file_name);
+    if (empty($download_file_name)) {
+        $download_file_name = sanitize_file_name($original_file_name);
+    }
+    if (empty($download_file_name)) {
+        $download_file_name = 'download.zip';
+    }
+
+    $update_success = update_product_file($product->ID, $temp_file_path, $download_file_name);
+    if ($update_success) {
+        if ($new_version !== '') {
+            update_post_meta($product->ID, 'product-version', $new_version);
+        }
+        update_post_meta($product->ID, '_downloadable', 'yes');
+        update_post_meta($product->ID, '_virtual', 'yes');
+
+        $log[] = 'Updated product: ' . $slug . ' (ID: ' . $product->ID . ')';
+        $result['products_updated']++;
+    } else {
+        if (isset($temp_file_path) && file_exists($temp_file_path)) {
+            unlink($temp_file_path);
+        }
+        $log[] = 'Failed to update files for product: ' . $slug . ' (ID: ' . $product->ID . ')';
+        $result['download_failures']++;
+    }
+}
+
+/**
+ * Start a background update job (manual or webhook).
+ *
+ * @param bool   $force_update
+ * @param string $source
+ * @return array Job state
+ */
+function csv_product_updater_start_job($force_update = false, $source = 'manual') {
+    $state = csv_product_updater_get_job_state();
+    if (isset($state['status']) && $state['status'] === 'running') {
+        return $state;
+    }
+
+    csv_product_updater_clear_stop();
+
+    $csv_file_url = FETCH_API_WPNOVA . 'data.csv';
+    $log = get_option('csv_product_updater_log', array());
+    if (!is_array($log)) $log = array();
+
+    $rows = csv_product_updater_fetch_csv_rows($csv_file_url, $log);
+    if (is_wp_error($rows)) {
+        $message = 'Failed to start job: ' . $rows->get_error_message();
+        array_unshift($log, $message);
+        update_option('csv_product_updater_log', $log);
+
+        $state = array(
+            'status'      => 'error',
+            'error'       => $message,
+            'started_at'  => current_time('mysql'),
+            'ended_at'    => current_time('mysql'),
+            'cursor'      => 0,
+            'total_rows'  => 0,
+            'current'     => array('slug' => '', 'title' => ''),
+            'result'      => array(),
+            'force_update'=> (bool) $force_update,
+            'source'      => (string) $source,
+        );
+        csv_product_updater_save_job_state($state);
+        return $state;
+    }
+
+    $total_rows = count($rows);
+    $start_time = current_time('mysql');
+
+    $result = array(
+        'start_time'         => $start_time,
+        'total_rows'         => $total_rows,
+        'products_updated'   => 0,
+        'products_up_to_date'=> 0,
+        'products_created'   => 0,
+        'products_not_found' => 0,
+        'download_failures'  => 0,
+        'force_update'       => $force_update ? true : false,
+    );
+
+    $state = array(
+        'status'       => 'running',
+        'started_at'   => $start_time,
+        'ended_at'     => null,
+        'cursor'       => 0,
+        'total_rows'   => $total_rows,
+        'current'      => array('slug' => '', 'title' => ''),
+        'result'       => $result,
+        'force_update' => (bool) $force_update,
+        'source'       => (string) $source,
+        'last_message' => '',
+    );
+
+    array_unshift($log, sprintf('Background update job started (%s). Total rows: %d. Force: %s. Time: %s', $source, $total_rows, $force_update ? 'true' : 'false', $start_time));
+    update_option('csv_product_updater_log', $log);
+    csv_product_updater_save_job_state($state);
+
+    // Schedule first batch ASAP
+    wp_schedule_single_event(time() + 1, 'csv_product_updater_process_batch_event');
+
+    return $state;
+}
+
+/**
+ * Daily cron handler: start a background job instead of running a long synchronous request.
+ */
+function csv_product_updater_daily_event_handler() {
+    csv_product_updater_start_job(false, 'daily_cron');
+}
+
+/**
+ * Process a small batch of rows in the background.
+ */
+function csv_product_updater_process_batch() {
+    $state = csv_product_updater_get_job_state();
+    if (!is_array($state) || !isset($state['status']) || $state['status'] !== 'running') {
+        return;
+    }
+
+    // Stop requested?
+    if (csv_product_updater_is_stop_requested()) {
+        $state['status'] = 'stopped';
+        $state['ended_at'] = current_time('mysql');
+        $state['last_message'] = 'Stop requested; job stopped.';
+        $state['current'] = array('slug' => '', 'title' => '');
+        csv_product_updater_save_job_state($state);
+
+        $log = get_option('csv_product_updater_log', array());
+        if (!is_array($log)) $log = array();
+        array_unshift($log, 'Background update job stopped at ' . $state['ended_at']);
+        update_option('csv_product_updater_log', $log);
+        update_option('csv_product_updater_last_updated_date', $state['ended_at']);
+        return;
+    }
+
+    // Prevent overlapping runs
+    if (!csv_product_updater_acquire_lock()) {
+        // Another batch is running; try again shortly
+        wp_schedule_single_event(time() + 10, 'csv_product_updater_process_batch_event');
+        return;
+    }
+
+    $csv_file_url = FETCH_API_WPNOVA . 'data.csv';
+    $log = get_option('csv_product_updater_log', array());
+    if (!is_array($log)) $log = array();
+
+    $rows = csv_product_updater_fetch_csv_rows($csv_file_url, $log);
+    if (is_wp_error($rows)) {
+        $state['status'] = 'error';
+        $state['ended_at'] = current_time('mysql');
+        $state['last_message'] = 'Batch failed: ' . $rows->get_error_message();
+        $state['error'] = $rows->get_error_message();
+        csv_product_updater_save_job_state($state);
+
+        array_unshift($log, 'Background update job failed: ' . $rows->get_error_message());
+        update_option('csv_product_updater_log', $log);
+
+        csv_product_updater_release_lock();
+        return;
+    }
+
+    $total_rows = count($rows);
+    $cursor = isset($state['cursor']) ? (int) $state['cursor'] : 0;
+    $force_update = isset($state['force_update']) ? (bool) $state['force_update'] : false;
+
+    // Keep totals fresh (in case CSV size changes)
+    $state['total_rows'] = $total_rows;
+    if (isset($state['result']) && is_array($state['result'])) {
+        $state['result']['total_rows'] = $total_rows;
+    }
+
+    $batch_size = (int) CSV_PRODUCT_UPDATER_BATCH_SIZE;
+    if ($batch_size < 1) $batch_size = 1;
+
+    $processed_any = false;
+
+    for ($i = 0; $i < $batch_size; $i++) {
+        if ($cursor >= $total_rows) {
+            break;
+        }
+
+        $row = $rows[$cursor];
+
+        // Update current product info for UI
+        $slug = sanitize_title((string) csv_product_updater_row_value($row, 7, ''));
+        $title = (string) csv_product_updater_row_value($row, 3, '');
+        if ($title === '') {
+            $title = (string) csv_product_updater_row_value($row, 1, '');
+        }
+
+        $state['current'] = array(
+            'slug'  => $slug,
+            'title' => $title,
+        );
+        $state['last_message'] = 'Processing: ' . ($title !== '' ? $title : $slug);
+        csv_product_updater_save_job_state($state);
+
+        // Do the work
+        if (!isset($state['result']) || !is_array($state['result'])) {
+            $state['result'] = array();
+        }
+        csv_product_updater_process_row($row, $force_update, $state['result'], $log);
+
+        $cursor++;
+        $state['cursor'] = $cursor;
+        $processed_any = true;
+
+        // Persist state/log after each item so UI stays accurate
+        csv_product_updater_save_job_state($state);
+        update_option('csv_product_updater_log', $log);
+
+        // If stop was requested mid-batch, stop after current row
+        if (csv_product_updater_is_stop_requested()) {
+            break;
+        }
+    }
+
+    // Completion / stop handling
+    if (csv_product_updater_is_stop_requested()) {
+        $state['status'] = 'stopped';
+        $state['ended_at'] = current_time('mysql');
+        $state['current'] = array('slug' => '', 'title' => '');
+        $state['last_message'] = 'Stop requested; job stopped.';
+        csv_product_updater_save_job_state($state);
+
+        array_unshift($log, 'Background update job stopped at ' . $state['ended_at']);
+        update_option('csv_product_updater_log', $log);
+        update_option('csv_product_updater_last_updated_date', $state['ended_at']);
+
+        csv_product_updater_release_lock();
+        return;
+    }
+
+    if ($cursor >= $total_rows) {
+        $state['status'] = 'completed';
+        $state['ended_at'] = current_time('mysql');
+        $state['current'] = array('slug' => '', 'title' => '');
+        $state['last_message'] = 'Job completed.';
+        // Compute duration/success
+        if (isset($state['result']) && is_array($state['result'])) {
+            $state['result']['end_time'] = $state['ended_at'];
+            $state['result']['duration_seconds'] = strtotime($state['ended_at']) - strtotime($state['result']['start_time']);
+            $state['result']['success'] = (isset($state['result']['download_failures']) ? (int) $state['result']['download_failures'] : 0) === 0;
+        }
+        csv_product_updater_save_job_state($state);
+
+        array_unshift($log, 'Background update job completed at ' . $state['ended_at']);
+        update_option('csv_product_updater_log', $log);
+        update_option('csv_product_updater_last_updated_date', $state['ended_at']);
+
+        csv_product_updater_release_lock();
+        return;
+    }
+
+    // Schedule next batch if we did any work (or if cursor is behind)
+    if ($processed_any) {
+        wp_schedule_single_event(time() + 5, 'csv_product_updater_process_batch_event');
+    } else {
+        // Nothing processed; try again later
+        wp_schedule_single_event(time() + 15, 'csv_product_updater_process_batch_event');
+    }
+
+    csv_product_updater_release_lock();
+}
+
 function update_product_files($options = array()) {
     $force_update = false;
     if (is_bool($options)) {
@@ -288,7 +728,6 @@ function update_product_files($options = array()) {
         $force_update = (bool) $options['force_update'];
     }
 
-    $csv_file_url = FETCH_API_WPNOVA . 'data.csv';
     $log = array();
     if ($force_update) {
         $log[] = 'Force update enabled - bypassing up-to-date version checks.';
@@ -304,14 +743,10 @@ function update_product_files($options = array()) {
         'force_update' => $force_update ? true : false,
     );
 
-    // Get CSV data from the URL (WordPress HTTP API)
-    $csv_response = wp_remote_get($csv_file_url, array(
-        'timeout'     => CSV_PRODUCT_UPDATER_HTTP_TIMEOUT,
-        'redirection' => 5,
-    ));
-
-    if (is_wp_error($csv_response)) {
-        $error_message = 'Failed to fetch CSV data from ' . $csv_file_url . ' - ' . $csv_response->get_error_message();
+    $csv_file_url = FETCH_API_WPNOVA . 'data.csv';
+    $csv_data = csv_product_updater_fetch_csv_rows($csv_file_url, $log);
+    if (is_wp_error($csv_data)) {
+        $error_message = $csv_data->get_error_message();
         $log[] = $error_message;
         update_option('csv_product_updater_log', $log);
         $result['error'] = $error_message;
@@ -319,132 +754,11 @@ function update_product_files($options = array()) {
         return $result;
     }
 
-    $csv_response_code = wp_remote_retrieve_response_code($csv_response);
-    if ($csv_response_code != 200) {
-        $error_message = 'Failed to fetch CSV data from ' . $csv_file_url . ' - HTTP ' . $csv_response_code;
-        $log[] = $error_message;
-        update_option('csv_product_updater_log', $log);
-        $result['error'] = $error_message;
-        $result['end_time'] = current_time('mysql');
-        return $result;
-    }
-
-    $csv_body = wp_remote_retrieve_body($csv_response);
-    if (!is_string($csv_body) || trim($csv_body) === '') {
-        $error_message = 'Failed to fetch CSV data from ' . $csv_file_url . ' - empty body';
-        $log[] = $error_message;
-        update_option('csv_product_updater_log', $log);
-        $result['error'] = $error_message;
-        $result['end_time'] = current_time('mysql');
-        return $result;
-    }
-
-    $csv_lines = preg_split("/\r\n|\n|\r/", trim($csv_body));
-    
-    $csv_data = array_map('str_getcsv', $csv_lines);
-    
-    array_shift($csv_data);  // Remove the header row
     $result['total_rows'] = count($csv_data);
     $log[] = 'Total rows in CSV: ' . count($csv_data);
 
-    // Iterate over each row of the CSV data
     foreach ($csv_data as $row) {
-        // Extract the slug early so we don't download files for missing products
-        $slug = isset($row[7]) ? sanitize_title(trim($row[7])) : '';  // slug column
-        if ($slug === '') {
-            $log[] = 'Skipped row - empty slug';
-            continue;
-        }
-
-        // Find a product that matches the slug (with meta fallback)
-        $product = csv_product_updater_find_product($slug);
-
-        // Create missing products on-the-fly
-        if (!$product) {
-            $created_id = csv_product_updater_create_product_from_row($row, $slug, $log);
-            if (is_wp_error($created_id)) {
-                $log[] = 'Failed to create product for slug: ' . $slug . ' - ' . $created_id->get_error_message();
-                $result['products_not_found']++;
-                continue;
-            }
-            $product = get_post((int) $created_id);
-            if ($product instanceof WP_Post) {
-                $log[] = 'Created product: ' . $slug . ' (ID: ' . $product->ID . ')';
-                $result['products_created']++;
-            } else {
-                $log[] = 'Failed to load newly created product for slug: ' . $slug;
-                $result['products_not_found']++;
-                continue;
-            }
-        }
-
-        // If a matching product was found, update its file (only if version changed)
-        if ($product) {
-            $new_version = isset($row[5]) ? trim($row[5]) : ''; // version column
-            $existing_version = get_post_meta($product->ID, 'product-version', true);
-            if (!$force_update && $new_version !== '' && (string) $existing_version === (string) $new_version) {
-                $log[] = 'Up-to-date - skipped download for product: ' . $slug . ' (ID: ' . $product->ID . ', version: ' . $new_version . ')';
-                $result['products_up_to_date']++;
-                continue;
-            }
-
-            // Extract the file URL (only after we know we need to update)
-            $file_url = isset($row[8]) ? $row[8] : '';  // fileUrl column
-            // Ensure no double slashes when concatenating
-            $file_url = rtrim(FETCH_API_WPNOVA, '/') . '/' . ltrim($file_url, '/');
-
-            // Check if the file URL is valid
-            if (filter_var($file_url, FILTER_VALIDATE_URL) === false) {
-                $log[] = 'Invalid file URL: ' . $file_url;
-                $result['download_failures']++;
-                continue;
-            }
-
-            // Download the file and save it temporarily on your server (streaming, no in-memory body)
-            $download_result = download_file($file_url);
-
-            // Check if the file was downloaded successfully
-            if ($download_result === false || !is_array($download_result)) {
-                $log[] = 'Failed to download file from URL: ' . $file_url;
-                $result['download_failures']++;
-                continue;
-            }
-
-            list($temp_file_path, $original_file_name) = $download_result;
-
-            // Use the filename from the URL path (ignores query strings)
-            $download_file_name = basename(parse_url($file_url, PHP_URL_PATH));
-            $download_file_name = sanitize_file_name($download_file_name);
-            if (empty($download_file_name)) {
-                $download_file_name = sanitize_file_name($original_file_name);
-            }
-            if (empty($download_file_name)) {
-                $download_file_name = 'download.zip';
-            }
-
-            $update_success = update_product_file($product->ID, $temp_file_path, $download_file_name);
-            
-            if ($update_success) {
-                // Update the product version
-                if ($new_version !== '') {
-                    update_post_meta($product->ID, 'product-version', $new_version);  // version column
-                }
-                
-                // Ensure product is marked as downloadable
-                update_post_meta($product->ID, '_downloadable', 'yes');
-                update_post_meta($product->ID, '_virtual', 'yes');
-                
-                $log[] = 'Updated product: ' . $slug . ' (ID: ' . $product->ID . ')';
-                $result['products_updated']++;
-            } else {
-                // Clean up the temp file on failure (update_product_file only moves it on success)
-                if (isset($temp_file_path) && file_exists($temp_file_path)) {
-                    unlink($temp_file_path);
-                }
-                $log[] = 'Failed to update files for product: ' . $slug . ' (ID: ' . $product->ID . ')';
-                $result['download_failures']++;
-            }
-        }
+        csv_product_updater_process_row($row, $force_update, $result, $log);
     }
 
     // Store the log data in an option instead of a transient so it persists until the next update
@@ -638,6 +952,47 @@ function csv_product_updater_admin_menu() {
     add_options_page('CSV Product Updater', 'CSV Product Updater', 'manage_options', 'csv-product-updater', 'csv_product_updater_admin_page');
 }
 
+// Admin AJAX endpoints for background job control/status
+add_action('wp_ajax_csv_product_updater_start', 'csv_product_updater_ajax_start');
+add_action('wp_ajax_csv_product_updater_status', 'csv_product_updater_ajax_status');
+add_action('wp_ajax_csv_product_updater_stop', 'csv_product_updater_ajax_stop');
+
+function csv_product_updater_ajax_start() {
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(array('error' => 'forbidden'), 403);
+    }
+    check_ajax_referer('csv_product_updater_job');
+
+    $force_update = false;
+    if (isset($_POST['force_update'])) {
+        $force_update = (intval($_POST['force_update']) === 1);
+    }
+
+    $state = csv_product_updater_start_job($force_update, 'admin_ajax');
+    wp_send_json_success($state);
+}
+
+function csv_product_updater_ajax_status() {
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(array('error' => 'forbidden'), 403);
+    }
+    check_ajax_referer('csv_product_updater_job');
+
+    $state = csv_product_updater_get_job_state();
+    wp_send_json_success($state);
+}
+
+function csv_product_updater_ajax_stop() {
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(array('error' => 'forbidden'), 403);
+    }
+    check_ajax_referer('csv_product_updater_job');
+
+    csv_product_updater_request_stop();
+    $state = csv_product_updater_get_job_state();
+    wp_send_json_success($state);
+}
+
 // The settings page
 function csv_product_updater_admin_page() {
     // Check user capabilities
@@ -651,12 +1006,26 @@ function csv_product_updater_admin_page() {
     // Remove notification section from admin panel - updates will happen silently when triggered by API
 
     // Print the existing update button with nonce field for security
-    echo '<form method="post">';
+    echo '<form method="post" id="csvpu-update-form">';
     wp_nonce_field('csv_product_updater_nonce', 'csv_product_updater_nonce_field');
-    echo '<input type="submit" name="csv_product_updater_update" value="Update Products" />';
-    echo ' <input type="submit" name="csv_product_updater_force_update" value="Force Update Products" style="background:#ff6b6b;color:#fff;border-color:#ff6b6b;" onclick="return confirm(\'Force Update will re-download and re-attach files even if the version is unchanged. Continue?\');" />';
+    echo '<input type="submit" id="csvpu-start" name="csv_product_updater_update" value="Update Products" class="button button-primary" />';
+    echo ' <input type="submit" id="csvpu-force" name="csv_product_updater_force_update" value="Force Update Products" class="button" style="background:#ff6b6b;color:#fff;border-color:#ff6b6b;" onclick="return confirm(\'Force Update will re-download and re-attach files even if the version is unchanged. Continue?\');" />';
     echo '<p>Last manual update on: ' . get_option('csv_product_updater_last_updated_date', 'Never') . '</p>';
     echo '</form>';
+
+    // Background progress UI
+    echo '<h2>Background Update Status</h2>';
+    echo '<div id="csvpu-job-box" style="max-width: 740px; background: #fff; border: 1px solid #dcdcde; padding: 12px; margin: 10px 0;">';
+    echo '  <div id="csvpu-progress-wrap" style="width: 100%; height: 18px; background: #f0f0f1; border: 1px solid #c3c4c7; border-radius: 3px; overflow: hidden;">';
+    echo '    <div id="csvpu-progress-bar" style="height: 18px; width: 0%; background: #2271b1;"></div>';
+    echo '  </div>';
+    echo '  <p id="csvpu-status" style="margin: 10px 0 0 0;"></p>';
+    echo '  <p id="csvpu-current" style="margin: 6px 0 0 0;"></p>';
+    echo '  <div id="csvpu-counters" style="margin-top: 8px;"></div>';
+    echo '  <div style="margin-top: 10px;">';
+    echo '    <button type="button" id="csvpu-stop" class="button">Stop</button>';
+    echo '  </div>';
+    echo '</div>';
     
     // Add test slug lookup form
     echo '<h2>Test Product Lookup</h2>';
@@ -779,17 +1148,17 @@ add_action('admin_init', 'csv_product_updater_admin_init');
 
 function csv_product_updater_admin_init() {
     if (isset($_POST['csv_product_updater_update']) && check_admin_referer('csv_product_updater_nonce', 'csv_product_updater_nonce_field')) {
-        // Set the date of the last update
-        update_option('csv_product_updater_last_updated_date', current_time('mysql'));
-
-        update_product_files();
+        // Start background job (fallback if JS is disabled)
+        csv_product_updater_start_job(false, 'admin_form');
+        wp_safe_redirect(menu_page_url('csv-product-updater', false));
+        exit;
     }
 
     if (isset($_POST['csv_product_updater_force_update']) && check_admin_referer('csv_product_updater_nonce', 'csv_product_updater_nonce_field')) {
-        // Set the date of the last update
-        update_option('csv_product_updater_last_updated_date', current_time('mysql'));
-
-        update_product_files(array('force_update' => true));
+        // Start background job (force)
+        csv_product_updater_start_job(true, 'admin_form');
+        wp_safe_redirect(menu_page_url('csv-product-updater', false));
+        exit;
     }
 
     // Check if the new "Send Refresh Request" button was clicked and verify nonce
@@ -942,17 +1311,118 @@ function csv_product_updater_enqueue_scripts($hook) {
                 dateFormat: 'yy-mm-dd'
             });
 
-            const updateBtn = document.querySelector('[name="csv_product_updater_update"]');
-            const refreshBtn = document.querySelector('[name="csv_product_updater_send_refresh"]');
-            const loadingSign = document.getElementById('loading-sign');
+            const nonce = '<?php echo esc_js(wp_create_nonce('csv_product_updater_job')); ?>';
+            let pollTimer = null;
 
-            updateBtn.addEventListener('click', function() {
-                loadingSign.style.display = 'block';
+            function renderState(state) {
+                state = state || {};
+                const status = state.status || 'idle';
+                const cursor = parseInt(state.cursor || 0, 10) || 0;
+                const total = parseInt(state.total_rows || (state.result && state.result.total_rows) || 0, 10) || 0;
+
+                let pct = 0;
+                if (total > 0) {
+                    pct = Math.round((cursor / total) * 100);
+                    if (pct > 100) pct = 100;
+                    if (pct < 0) pct = 0;
+                }
+
+                $('#csvpu-progress-bar').css('width', pct + '%');
+
+                const msg = state.last_message || '';
+                $('#csvpu-status').text('Status: ' + status + (msg ? ' — ' + msg : ''));
+
+                const cur = state.current || {};
+                const curText = (cur.title || cur.slug) ? ('Current: ' + (cur.title || '') + (cur.slug ? (' (' + cur.slug + ')') : '')) : 'Current: -';
+                $('#csvpu-current').text(curText);
+
+                const r = state.result || {};
+                const counters = [
+                    'Total: ' + (r.total_rows || total || 0),
+                    'Processed: ' + cursor,
+                    'Created: ' + (r.products_created || 0),
+                    'Updated: ' + (r.products_updated || 0),
+                    'Up-to-date: ' + (r.products_up_to_date || 0),
+                    'Not found: ' + (r.products_not_found || 0),
+                    'Failures: ' + (r.download_failures || 0)
+                ];
+                $('#csvpu-counters').html('<code style=\"display:block;white-space:pre-wrap;\">' + counters.join('\\n') + '</code>');
+
+                // Stop button enabled only while running
+                if (status === 'running') {
+                    $('#csvpu-stop').prop('disabled', false);
+                } else {
+                    $('#csvpu-stop').prop('disabled', true);
+                }
+            }
+
+            function fetchStatus() {
+                return $.post(ajaxurl, {
+                    action: 'csv_product_updater_status',
+                    _ajax_nonce: nonce
+                }).done(function(resp) {
+                    if (resp && resp.success) {
+                        renderState(resp.data || {});
+                        const st = (resp.data && resp.data.status) ? resp.data.status : 'idle';
+                        if (st === 'running') {
+                            schedulePoll();
+                        }
+                    }
+                });
+            }
+
+            function schedulePoll() {
+                if (pollTimer) return;
+                pollTimer = setTimeout(function() {
+                    pollTimer = null;
+                    fetchStatus();
+                }, 1500);
+            }
+
+            function startJob(forceUpdate) {
+                $('#csvpu-start, #csvpu-force').prop('disabled', true);
+                return $.post(ajaxurl, {
+                    action: 'csv_product_updater_start',
+                    force_update: forceUpdate ? 1 : 0,
+                    _ajax_nonce: nonce
+                }).done(function(resp) {
+                    if (resp && resp.success) {
+                        renderState(resp.data || {});
+                        schedulePoll();
+                    }
+                }).always(function() {
+                    setTimeout(function() {
+                        $('#csvpu-start, #csvpu-force').prop('disabled', false);
+                    }, 1500);
+                });
+            }
+
+            function stopJob() {
+                $('#csvpu-stop').prop('disabled', true);
+                return $.post(ajaxurl, {
+                    action: 'csv_product_updater_stop',
+                    _ajax_nonce: nonce
+                }).done(function(resp) {
+                    if (resp && resp.success) {
+                        renderState(resp.data || {});
+                    }
+                });
+            }
+
+            // Intercept the manual update form submits to start via AJAX (fallback still works if JS fails)
+            $('#csvpu-update-form').on('submit', function(e) {
+                e.preventDefault();
+                const isForce = $(document.activeElement).attr('id') === 'csvpu-force';
+                startJob(isForce);
             });
 
-            refreshBtn.addEventListener('click', function() {
-                loadingSign.style.display = 'block';
+            $('#csvpu-stop').on('click', function(e) {
+                e.preventDefault();
+                stopJob();
             });
+
+            // Initial status load (also shows progress for jobs started via webhook/cron)
+            fetchStatus();
         });
     </script>
     <?php
@@ -1114,11 +1584,36 @@ function register_data_ready_endpoint() {
     register_rest_route('wpnova/v1', '/data-ready', array(
         'methods' => 'POST',
         'callback' => 'handle_data_ready_notification',
-        'permission_callback' => function() {
-            // You can implement more advanced authentication here
-            return true;
-        }
+        'permission_callback' => 'csv_product_updater_webhook_permission',
     ));
+}
+
+/**
+ * Shared-secret auth for the data-ready webhook.
+ *
+ * Configure in wp-config.php:
+ *   define('WPNOVA_WEBHOOK_SECRET', 'your-long-random-secret');
+ */
+function csv_product_updater_webhook_permission($request) {
+    if (!defined('WPNOVA_WEBHOOK_SECRET') || !is_string(WPNOVA_WEBHOOK_SECRET) || WPNOVA_WEBHOOK_SECRET === '') {
+        return new WP_Error('wpnova_secret_missing', 'WPNOVA_WEBHOOK_SECRET is not configured', array('status' => 403));
+    }
+
+    // Header names are case-insensitive; WP_REST_Request normalizes internally.
+    $provided = '';
+    if (is_object($request) && method_exists($request, 'get_header')) {
+        $provided = (string) $request->get_header('x-wpnova-secret');
+    }
+
+    if ($provided === '') {
+        return new WP_Error('wpnova_secret_required', 'Missing X-WPNOVA-Secret header', array('status' => 403));
+    }
+
+    if (!hash_equals((string) WPNOVA_WEBHOOK_SECRET, $provided)) {
+        return new WP_Error('wpnova_secret_invalid', 'Invalid webhook secret', array('status' => 403));
+    }
+
+    return true;
 }
 
 /**
@@ -1143,7 +1638,7 @@ function handle_data_ready_notification($request) {
     
     // No notifications - just log the API trigger silently
     $log_message = sprintf(
-        'Products updated via API trigger at %s',
+        'Update job queued via API trigger at %s',
         current_time('mysql')
     );
     
@@ -1155,14 +1650,14 @@ function handle_data_ready_notification($request) {
     // Update the last update time
     update_option('csv_product_updater_last_updated_date', current_time('mysql'));
     
-    // Trigger product update process immediately without notification
-    $update_result = update_product_files(array('force_update' => $force_update));
+    // Queue background job (returns immediately; batches run via WP-Cron)
+    $job_state = csv_product_updater_start_job($force_update, 'webhook');
     
     // Return success response
     return new WP_REST_Response(array(
         'success' => true,
-        'message' => 'Update triggered successfully',
-        'update_result' => $update_result,
+        'message' => 'Update queued successfully',
+        'job_state' => $job_state,
         'timestamp' => current_time('mysql')
     ), 200);
 }

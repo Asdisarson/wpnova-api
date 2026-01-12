@@ -23,6 +23,51 @@ const convertJsonToCsv = require('./convertJsonToCsv');
 // Add a universal delay function
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+// Notify WordPress that data.csv is ready (optional)
+const notifyWordPressDataReady = async ({ downloadedCount = 0, errorCount = 0, forceUpdate = false } = {}) => {
+    const webhookUrl = process.env.WORDPRESS_DATA_READY_URL;
+    const secret = process.env.WPNOVA_WEBHOOK_SECRET;
+
+    if (!webhookUrl) {
+        log('webhook', 'WORDPRESS_DATA_READY_URL not set; skipping WordPress notification');
+        return { ok: false, skipped: true, reason: 'missing WORDPRESS_DATA_READY_URL' };
+    }
+    if (!secret) {
+        log('webhook', 'WPNOVA_WEBHOOK_SECRET not set; skipping WordPress notification');
+        return { ok: false, skipped: true, reason: 'missing WPNOVA_WEBHOOK_SECRET' };
+    }
+
+    try {
+        log('webhook', `Notifying WordPress data-ready: ${webhookUrl}`);
+        const response = await axios.post(
+            webhookUrl,
+            {
+                force_update: !!forceUpdate,
+                downloadedCount,
+                errorCount,
+                timestamp: Date.now()
+            },
+            {
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-WPNOVA-Secret': secret
+                },
+                timeout: 30000
+            }
+        );
+        log('webhook', `WordPress notified successfully (status ${response.status})`);
+        return { ok: true, status: response.status, data: response.data };
+    } catch (error) {
+        const status = error?.response?.status;
+        const data = error?.response?.data;
+        log('webhook', `Failed to notify WordPress: ${status || ''} ${error.message}`);
+        if (status) log('webhook', `Response status: ${status}`);
+        if (data) log('webhook', `Response data: ${JSON.stringify(data).slice(0, 2000)}`);
+        // Don't throw; webhook failure shouldn't fail the entire run
+        return { ok: false, error: error.message, status, data };
+    }
+};
+
 // Tuning knobs
 const MAX_DOWNLOAD_RETRIES = 2;
 const DOWNLOAD_RETRY_BASE_DELAY_MS = 1500;
@@ -346,10 +391,18 @@ async function downloadFromChangelog(options = {}) {
                         let version = '';
                         let textWithoutVersion = productName;
                         try {
-                            const versionMatch = productName.match(/v\d+(\.\d+){0,3}/);
+                            // Support versions like "v6.2.0.0" and also "4.1.2" (no leading v)
+                            const versionMatch =
+                                productName.match(/\bv\d+(?:\.\d+){0,4}\b/i) ||
+                                productName.match(/\b\d+\.\d+(?:\.\d+){0,3}\b/) ||
+                                // Also allow single-number versions like "Product Name 4" (only if at end)
+                                productName.match(/\b\d{1,4}\b(?=\s*[\)\]]?\s*$)/);
                             if (versionMatch) {
-                                version = versionMatch[0].replace('v', '');
-                                textWithoutVersion = productName.replace(/ v\d+(\.\d+){0,3}/, '');
+                                version = versionMatch[0].replace(/^v/i, '');
+                                textWithoutVersion = productName
+                                    .replace(versionMatch[0], '')
+                                    .replace(/\s+/g, ' ')
+                                    .trim();
                             }
                         } catch (e) {}
                         
@@ -847,6 +900,13 @@ async function downloadFromChangelog(options = {}) {
                 });
             });
         }
+
+        // Notify WordPress that data.csv is ready so it can auto-start updating products
+        await notifyWordPressDataReady({
+            downloadedCount: list.length,
+            errorCount: errors.length,
+            forceUpdate: false
+        });
         
         // Close persistent browser session
         await persistentSession.close();

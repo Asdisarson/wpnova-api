@@ -582,26 +582,23 @@ const scheduledTask = async (date = new Date()) => {
                     let slug = '';
                     let productId = '';
                     try {
-                        // Match version pattern: v1.2.3 or v1.2 or v1
-                        let versionMatch = text.match(/v\d+(\.\d+){0,3}/);
+                        // Support versions like "v6.2.0.0" and also "4.1.2" (no leading v)
+                        const versionMatch =
+                            text.match(/\bv\d+(?:\.\d+){0,4}\b/i) ||
+                            text.match(/\b\d+\.\d+(?:\.\d+){0,3}\b/) ||
+                            // Also allow single-number versions like "Product Name 4" (only if at end)
+                            text.match(/\b\d{1,4}\b(?=\s*[\)\]]?\s*$)/);
+
                         if (versionMatch) {
-                            let version = versionMatch[0];
-                            
-                            // Remove 'v' from version
-                            versionWithoutV = version.replace('v', '');
-                            // Remove version from title
-                            textWithoutVersion = text.replace(/ v\d+(\.\d+){0,3}/, '');
+                            const version = versionMatch[0];
+                            versionWithoutV = version.replace(/^v/i, '');
+                            textWithoutVersion = text
+                                .replace(version, '')
+                                .replace(/\s+/g, ' ')
+                                .trim();
                         } else {
-                            // No version found in the pattern v1.2.3, try looking for numbers
-                            let numberMatch = text.match(/\s\d+(\.\d+){0,3}/);
-                            if (numberMatch) {
-                                versionWithoutV = numberMatch[0].trim();
-                                textWithoutVersion = text.replace(numberMatch[0], '');
-                            } else {
-                                // No version pattern found
-                                versionWithoutV = '';
-                                textWithoutVersion = text;
-                            }
+                            versionWithoutV = '';
+                            textWithoutVersion = text;
                         }
                     } catch (e) {
                         console.log(`Error extracting version: ${e.message}`);
@@ -1810,17 +1807,15 @@ const downloadAllFiles = async (date = new Date()) => {
                     if (!row.version && row.productName) {
                         // Try to extract version from product name
                         try {
-                            const versionMatch = row.productName.match(/v\d+(\.\d+){0,3}/);
+                            const versionMatch =
+                                row.productName.match(/\bv\d+(?:\.\d+){0,4}\b/i) ||
+                                row.productName.match(/\b\d+\.\d+(?:\.\d+){0,3}\b/) ||
+                                // Also allow single-number versions like "Product Name 4" (only if at end)
+                                row.productName.match(/\b\d{1,4}\b(?=\s*[\)\]]?\s*$)/);
                             if (versionMatch) {
-                                row.version = versionMatch[0].replace('v', '');
+                                row.version = versionMatch[0].replace(/^v/i, '');
                             } else {
-                                // No version found in the pattern v1.2.3, try looking for numbers
-                                const numberMatch = row.productName.match(/\s\d+(\.\d+){0,3}/);
-                                if (numberMatch) {
-                                    row.version = numberMatch[0].trim();
-                                } else {
-                                    row.version = ''; // Set empty if no version found
-                                }
+                                row.version = '';
                             }
                         } catch (e) {
                             row.version = '';
