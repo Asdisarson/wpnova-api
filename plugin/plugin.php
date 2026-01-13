@@ -451,8 +451,9 @@ function csv_product_updater_start_refresh_queue($start_date, $force_update = fa
 
     csv_product_updater_save_refresh_queue_state($state);
 
-    // Kick off processing quickly
-    wp_schedule_single_event(time() + 1, 'csv_product_updater_process_refresh_queue_event');
+    // Kick off processing immediately
+    wp_schedule_single_event(time(), 'csv_product_updater_process_refresh_queue_event');
+    spawn_cron();
 
     // Log start
     $log = get_option('csv_product_updater_log', array());
@@ -551,6 +552,7 @@ function csv_product_updater_process_refresh_queue() {
         $state['updated_at'] = current_time('mysql');
         csv_product_updater_save_refresh_queue_state($state);
         wp_schedule_single_event(time() + 60, 'csv_product_updater_process_refresh_queue_event');
+        spawn_cron();
         return;
     }
 
@@ -573,6 +575,7 @@ function csv_product_updater_process_refresh_queue() {
             csv_product_updater_save_log($log);
 
             wp_schedule_single_event(time() + 5, 'csv_product_updater_process_refresh_queue_event');
+            spawn_cron();
             return;
         }
 
@@ -599,6 +602,7 @@ function csv_product_updater_process_refresh_queue() {
         $state['updated_at'] = current_time('mysql');
         csv_product_updater_save_refresh_queue_state($state);
         wp_schedule_single_event(time() + 60, 'csv_product_updater_process_refresh_queue_event');
+        spawn_cron();
         return;
     }
 
@@ -653,6 +657,7 @@ function csv_product_updater_process_refresh_queue() {
 
         // Retry later
         wp_schedule_single_event(time() + 60, 'csv_product_updater_process_refresh_queue_event');
+        spawn_cron();
         return;
     }
 
@@ -674,6 +679,7 @@ function csv_product_updater_process_refresh_queue() {
 
     // Re-run soon; we will wait for the webhook-started job to run/finish before advancing the queue.
     wp_schedule_single_event(time() + 60, 'csv_product_updater_process_refresh_queue_event');
+    spawn_cron();
 }
 
 /**
@@ -1427,8 +1433,11 @@ function csv_product_updater_start_job($force_update = false, $source = 'manual'
     csv_product_updater_save_log($log);
     csv_product_updater_save_job_state($state);
 
-    // Schedule first batch ASAP
-    wp_schedule_single_event(time() + 1, 'csv_product_updater_process_batch_event');
+    // Schedule first batch immediately
+    wp_schedule_single_event(time(), 'csv_product_updater_process_batch_event');
+
+    // Force WP-Cron to run immediately (don't wait for page visit)
+    spawn_cron();
 
     return $state;
 }
@@ -1470,6 +1479,7 @@ function csv_product_updater_process_batch() {
     if (!csv_product_updater_acquire_lock()) {
         // Another batch is running; try again shortly
         wp_schedule_single_event(time() + 10, 'csv_product_updater_process_batch_event');
+        spawn_cron();
         return;
     }
 
@@ -1616,6 +1626,9 @@ function csv_product_updater_process_batch() {
         // Nothing processed; try again later
         wp_schedule_single_event(time() + 15, 'csv_product_updater_process_batch_event');
     }
+
+    // Force WP-Cron to run immediately for next batch
+    spawn_cron();
 
     csv_product_updater_release_lock();
 }

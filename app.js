@@ -24,28 +24,28 @@ app.use((req, res, next) => {
 
 // Helper function to clean downloads directory (called before new download run)
 function cleanDownloadsDirectory() {
-    const downloadsDir = path.join(__dirname, 'public', 'downloads');
+        const downloadsDir = path.join(__dirname, 'public', 'downloads');
     try {
         if (!fs.existsSync(downloadsDir)) {
             fs.mkdirSync(downloadsDir, { recursive: true });
-            return;
-        }
+                return;
+            }
         const files = fs.readdirSync(downloadsDir);
         let removedCount = 0;
-        for (const file of files) {
+            for (const file of files) {
             // Keep index.html placeholder
             if (file === 'index.html') continue;
-            const filePath = path.join(downloadsDir, file);
+                const filePath = path.join(downloadsDir, file);
             try {
                 fs.unlinkSync(filePath);
                 removedCount++;
             } catch (err) {
-                console.error(`Error deleting file ${file}:`, err);
-            }
+                        console.error(`Error deleting file ${file}:`, err);
+                    }
         }
         if (removedCount > 0) {
             console.log(`🧹 Cleaned downloads directory (removed ${removedCount} files)`);
-        }
+            }
     } catch (err) {
         console.error('Error cleaning downloads directory:', err);
     }
@@ -103,19 +103,19 @@ app.get('/refresh', (req, res) => {
             // Clean downloads directory before starting new download run
             cleanDownloadsDirectory();
             
-            // Use the new unified changelog downloader
-            const result = await downloadFromChangelog({
-                date: date,
-                resultsPerPage: 500,
-                downloadFiles: true,
-                forceUpdateWebhook
-            });
-            
+        // Use the new unified changelog downloader
+        const result = await downloadFromChangelog({
+            date: date,
+            resultsPerPage: 500,
+            downloadFiles: true,
+            forceUpdateWebhook
+        });
+        
             console.log(`✅ Refresh completed: ${result.downloadedCount} downloaded, ${result.errorCount} errors`);
-        } catch (error) {
+    } catch (error) {
             console.error('❌ Error in background refresh process:', error);
         }
-    });
+        });
 });
 
 // Download all files from changelog (returns immediately, processes in background)
@@ -154,17 +154,17 @@ app.get('/download-all', (req, res) => {
             // Clean downloads directory before starting new download run
             cleanDownloadsDirectory();
             
-            const result = await downloadFromChangelog({
-                date: date,
-                resultsPerPage: 500,
-                downloadFiles: true
-            });
-            
+        const result = await downloadFromChangelog({
+            date: date,
+            resultsPerPage: 500,
+            downloadFiles: true
+        });
+        
             console.log(`✅ Download-all completed: ${result.downloadedCount} downloaded, ${result.errorCount} errors`);
-        } catch (error) {
+    } catch (error) {
             console.error('❌ Error in background download-all process:', error);
         }
-    });
+        });
 });
 
 // Get last update information
