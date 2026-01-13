@@ -22,26 +22,33 @@ app.use((req, res, next) => {
     next();
 });
 
-// Helper function to clean downloads directory after an hour
-function executeAfterAnHour() {
-    setTimeout(() => {
-        const downloadsDir = path.join(__dirname, 'public', 'downloads');
-        fs.readdir(downloadsDir, (err, files) => {
-            if (err) {
-                console.error('Error reading downloads directory:', err);
-                return;
+// Helper function to clean downloads directory (called before new download run)
+function cleanDownloadsDirectory() {
+    const downloadsDir = path.join(__dirname, 'public', 'downloads');
+    try {
+        if (!fs.existsSync(downloadsDir)) {
+            fs.mkdirSync(downloadsDir, { recursive: true });
+            return;
+        }
+        const files = fs.readdirSync(downloadsDir);
+        let removedCount = 0;
+        for (const file of files) {
+            // Keep index.html placeholder
+            if (file === 'index.html') continue;
+            const filePath = path.join(downloadsDir, file);
+            try {
+                fs.unlinkSync(filePath);
+                removedCount++;
+            } catch (err) {
+                console.error(`Error deleting file ${file}:`, err);
             }
-
-            for (const file of files) {
-                const filePath = path.join(downloadsDir, file);
-                fs.unlink(filePath, err => {
-                    if (err) {
-                        console.error(`Error deleting file ${file}:`, err);
-                    }
-                });
-            }
-        });
-    }, 3600000); // 3600000 milliseconds = 1 hour
+        }
+        if (removedCount > 0) {
+            console.log(`🧹 Cleaned downloads directory (removed ${removedCount} files)`);
+        }
+    } catch (err) {
+        console.error('Error cleaning downloads directory:', err);
+    }
 }
 
 // Static files
@@ -52,8 +59,8 @@ app.get('/health', (req, res) => {
     return res.status(200).json({ status: 'ok' });
 });
 
-// Refresh changelog endpoint
-app.get('/refresh', async(req, res) => {
+// Refresh changelog endpoint (returns immediately, processes in background)
+app.get('/refresh', (req, res) => {
     let date = new Date();
     
     // Validate and parse date from query parameter
@@ -67,7 +74,13 @@ app.get('/refresh', async(req, res) => {
         date = parsedDate;
     }
     
-    console.log(`Refreshing changelog for date: ${date.toLocaleDateString()}`);
+    const dateLabel = date.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+    });
+    
+    console.log(`Refreshing changelog for date: ${dateLabel}`);
 
     // Optional: propagate force_update to the WordPress webhook trigger (after CSV generation)
     const forceUpdateWebhook = (() => {
@@ -77,43 +90,36 @@ app.get('/refresh', async(req, res) => {
         return s === '1' || s === 'true' || s === 'yes' || s === 'on';
     })();
     
-    // Set a longer timeout for this endpoint as it can take a while
-    req.setTimeout(1800000); // 30 minutes
-    res.setTimeout(1800000);
+    // Return immediately
+    res.status(200).json({
+        message: 'Refresh started',
+        date: dateLabel,
+        status: 'processing'
+    });
     
-    try {
-        // Use the new unified changelog downloader
-        const result = await downloadFromChangelog({
-            date: date,
-            resultsPerPage: 500,
-            downloadFiles: true,
-            forceUpdateWebhook
-        });
-        
-        executeAfterAnHour();
-        return res.status(200).json({
-            message: 'Downloadable Files from Changelog',
-            date: date.toLocaleDateString('en-US', {
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric',
-            }),
-            files: result.products.length,
-            downloaded: result.downloadedCount,
-            errors: result.errorCount
-        });
-    } catch (error) {
-        console.error('Error in download process:', error);
-        executeAfterAnHour();
-        return res.status(503).json({
-            message: 'Something is Wrong',
-            error: error.message
-        });
-    }
+    // Process in background
+    setImmediate(async () => {
+        try {
+            // Clean downloads directory before starting new download run
+            cleanDownloadsDirectory();
+            
+            // Use the new unified changelog downloader
+            const result = await downloadFromChangelog({
+                date: date,
+                resultsPerPage: 500,
+                downloadFiles: true,
+                forceUpdateWebhook
+            });
+            
+            console.log(`✅ Refresh completed: ${result.downloadedCount} downloaded, ${result.errorCount} errors`);
+        } catch (error) {
+            console.error('❌ Error in background refresh process:', error);
+        }
+    });
 });
 
-// Download all files from changelog
-app.get('/download-all', async(req, res) => {
+// Download all files from changelog (returns immediately, processes in background)
+app.get('/download-all', (req, res) => {
     let date = new Date();
     
     // Validate and parse date from query parameter
@@ -127,39 +133,38 @@ app.get('/download-all', async(req, res) => {
         date = parsedDate;
     }
     
-    console.log(`Starting download of all files from changelog for date: ${date.toLocaleDateString()}`);
+    const dateLabel = date.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+    });
     
-    // Set a longer timeout for this endpoint as it can take a while
-    req.setTimeout(1800000); // 30 minutes
-    res.setTimeout(1800000);
+    console.log(`Starting download of all files from changelog for date: ${dateLabel}`);
     
-    try {
-        const result = await downloadFromChangelog({
-            date: date,
-            resultsPerPage: 500,
-            downloadFiles: true
-        });
-        
-        executeAfterAnHour();
-        return res.status(200).json({
-            message: 'Downloaded all files from changelog',
-            date: date.toLocaleDateString('en-US', {
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric',
-            }),
-            downloaded: result.downloadedCount,
-            errors: result.errorCount,
-            files: result.products.length
-        });
-    } catch (error) {
-        console.error('Error downloading all files:', error);
-        executeAfterAnHour();
-        return res.status(503).json({
-            message: 'Error downloading all files',
-            error: error.message
-        });
-    }
+    // Return immediately
+    res.status(200).json({
+        message: 'Download started',
+        date: dateLabel,
+        status: 'processing'
+    });
+    
+    // Process in background
+    setImmediate(async () => {
+        try {
+            // Clean downloads directory before starting new download run
+            cleanDownloadsDirectory();
+            
+            const result = await downloadFromChangelog({
+                date: date,
+                resultsPerPage: 500,
+                downloadFiles: true
+            });
+            
+            console.log(`✅ Download-all completed: ${result.downloadedCount} downloaded, ${result.errorCount} errors`);
+        } catch (error) {
+            console.error('❌ Error in background download-all process:', error);
+        }
+    });
 });
 
 // Get last update information

@@ -18,12 +18,110 @@ if (!defined('CSV_PRODUCT_UPDATER_CREATED_PRODUCT_PRICE')) {
     define('CSV_PRODUCT_UPDATER_CREATED_PRODUCT_PRICE', '5.99');
 }
 
+// Price cap: if an imported product's regular price is above this, we clamp it down.
+if (!defined('CSV_PRODUCT_UPDATER_MAX_REGULAR_PRICE')) {
+    define('CSV_PRODUCT_UPDATER_MAX_REGULAR_PRICE', '12.99');
+}
+
 // Faster/safer defaults for lightweight CDN HEAD checks (these happen during validation/download flows)
 if (!defined('CSV_PRODUCT_UPDATER_CDN_HEAD_TIMEOUT')) {
     define('CSV_PRODUCT_UPDATER_CDN_HEAD_TIMEOUT', 15);
 }
 if (!defined('CSV_PRODUCT_UPDATER_CDN_HEAD_CACHE_TTL')) {
     define('CSV_PRODUCT_UPDATER_CDN_HEAD_CACHE_TTL', defined('MINUTE_IN_SECONDS') ? 10 * MINUTE_IN_SECONDS : 600);
+}
+
+/**
+ * Clamp regular price to a maximum (for products managed by this importer).
+ *
+ * @param int   $product_id
+ * @param array $log
+ * @return void
+ */
+function csv_product_updater_enforce_price_cap($product_id, &$log) {
+    $product_id = absint($product_id);
+    if ($product_id <= 0) return;
+
+    $cap = (float) CSV_PRODUCT_UPDATER_MAX_REGULAR_PRICE;
+    if ($cap <= 0) return;
+
+    if (!function_exists('wc_get_product')) {
+        return;
+    }
+    $product = wc_get_product($product_id);
+    if (!$product) return;
+
+    // Some product types may not expose regular prices; bail safely.
+    if (!method_exists($product, 'get_regular_price') || !method_exists($product, 'set_regular_price')) {
+        return;
+    }
+
+    $regular_raw = $product->get_regular_price();
+    if ($regular_raw === '' || $regular_raw === null) {
+        return;
+    }
+    $regular = (float) $regular_raw;
+    if ($regular <= $cap) {
+        return;
+    }
+
+    $cap_str = number_format($cap, 2, '.', '');
+
+    // Also clamp sale price if it exists and exceeds cap (prevents effective price > cap).
+    $sale_raw = method_exists($product, 'get_sale_price') ? $product->get_sale_price() : '';
+    $sale_num = ($sale_raw === '' || $sale_raw === null) ? 0.0 : (float) $sale_raw;
+    if ($sale_raw !== '' && $sale_num > $cap && method_exists($product, 'set_sale_price')) {
+        $product->set_sale_price($cap_str);
+        $sale_num = $cap;
+        $sale_raw = $cap_str;
+    }
+
+    $product->set_regular_price($cap_str);
+
+    // Keep active price consistent: if there's a valid sale (< cap), keep it; else use cap.
+    $effective = ($sale_raw !== '' && $sale_num > 0 && $sale_num < $cap) ? $sale_num : $cap;
+    if (method_exists($product, 'set_price')) {
+        $product->set_price(number_format($effective, 2, '.', ''));
+    }
+
+    $product->save();
+
+    $log[] = 'Capped regular price to ' . $cap_str . ' for product ' . $product_id . ' (was ' . $regular_raw . ').';
+}
+
+/**
+ * Lightweight HEAD status checker with transient cache.
+ *
+ * Used to avoid creating products when their source ZIP URL is missing (404).
+ *
+ * @param string $url
+ * @return int HTTP status code (0 if unknown/error)
+ */
+function csv_product_updater_cached_head_status_code($url) {
+    $url = is_string($url) ? trim($url) : '';
+    if ($url === '' || filter_var($url, FILTER_VALIDATE_URL) === false) {
+        return 0;
+    }
+
+    $cache_key = 'csv_product_updater_head_' . md5($url);
+    $cached = get_transient($cache_key);
+    if ($cached !== false) {
+        return (int) $cached;
+    }
+
+    $response = wp_remote_head($url, array(
+        'timeout'     => CSV_PRODUCT_UPDATER_CDN_HEAD_TIMEOUT,
+        'redirection' => 5,
+    ));
+    if (is_wp_error($response)) {
+        return 0;
+    }
+
+    $code = (int) wp_remote_retrieve_response_code($response);
+    if ($code > 0) {
+        set_transient($cache_key, (string) $code, CSV_PRODUCT_UPDATER_CDN_HEAD_CACHE_TTL);
+    }
+    return $code;
 }
 
 // Register activation hook
@@ -45,11 +143,25 @@ function csv_product_updater_refresh_deactivation() {
     wp_clear_scheduled_hook('csv_product_updater_refresh_daily_event');
 }
 
-// Hook into the daily event to send the GET request
-add_action('csv_product_updater_refresh_daily_event', 'send_refresh_request');
+// Hook into the daily event to send the GET request (async/non-blocking so cron doesn't hang)
+add_action('csv_product_updater_refresh_daily_event', 'csv_product_updater_refresh_daily_event_handler');
+function csv_product_updater_refresh_daily_event_handler() {
+    $resp = send_refresh_request(null, false, false);
+    if (is_wp_error($resp)) {
+        $log = get_option('csv_product_updater_log', array());
+        if (!is_array($log)) $log = array();
+        array_unshift($log, 'Daily refresh dispatch failed: ' . $resp->get_error_message());
+        csv_product_updater_save_log($log);
+    } else {
+        $log = get_option('csv_product_updater_log', array());
+        if (!is_array($log)) $log = array();
+        array_unshift($log, 'Daily refresh dispatched (async). Waiting for webhook...');
+        csv_product_updater_save_log($log);
+    }
+}
 
 // Function to send the GET request to the endpoint
-function send_refresh_request($date = null, $force_update = false) {
+function send_refresh_request($date = null, $force_update = false, $blocking = true) {
     $endpoint_url = FETCH_API_WPNOVA . 'refresh';
     
     $params = array();
@@ -63,14 +175,40 @@ function send_refresh_request($date = null, $force_update = false) {
     if (!empty($params)) {
         $endpoint_url = add_query_arg($params, $endpoint_url);
     }
-    $response = wp_remote_get($endpoint_url, array('timeout' => CSV_PRODUCT_UPDATER_HTTP_TIMEOUT));
 
-    // Handle the response if needed
+    $args = array(
+        'timeout'     => $blocking ? CSV_PRODUCT_UPDATER_HTTP_TIMEOUT : 0.01,
+        'blocking'    => (bool) $blocking,
+        'redirection' => 5,
+        'headers'     => array(
+            'Accept' => 'application/json',
+            // Some CDNs/WAFs behave better when a UA is present.
+            'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        ),
+    );
+
+    $response = wp_remote_get($endpoint_url, $args);
+
     if (is_wp_error($response)) {
         return $response;
-    } else {
+    }
+
+    // In non-blocking mode we don't have a reliable response body/code.
+    if (!$blocking) {
         return $response;
     }
+
+    $code = (int) wp_remote_retrieve_response_code($response);
+    if ($code < 200 || $code >= 300) {
+        $body = wp_remote_retrieve_body($response);
+        $snippet = is_string($body) ? trim($body) : '';
+        if (strlen($snippet) > 500) {
+            $snippet = substr($snippet, 0, 500) . '…';
+        }
+        return new WP_Error('refresh_http_error', 'Refresh request failed (HTTP ' . $code . ')' . ($snippet !== '' ? (': ' . $snippet) : ''));
+    }
+
+    return $response;
 }
 
 // Activation function
@@ -299,6 +437,11 @@ function csv_product_updater_start_refresh_queue($start_date, $force_update = fa
         'force_update' => (bool) $force_update,
         'dates'        => $dates,
         'index'        => 0,
+        // Pending day tracking (because /refresh can take a long time and may be behind a CDN timeout)
+        'pending_date' => '',
+        'pending_sent_at' => '',
+        'pending_job_started_at' => '',
+        'pending_attempts' => 0,
         'last_sent_date' => '',
         'last_sent_at'   => '',
         'last_response_code' => null,
@@ -382,6 +525,13 @@ function csv_product_updater_process_refresh_queue() {
     $index = isset($state['index']) ? (int) $state['index'] : 0;
     $force_update = isset($state['force_update']) ? (bool) $state['force_update'] : false;
 
+    // Track a "pending" day so we don't rely on the /refresh HTTP response (CDNs may return 520/timeout
+    // even though the backend continues and later triggers the data-ready webhook).
+    $pending_date = isset($state['pending_date']) ? (string) $state['pending_date'] : '';
+    $pending_sent_at = isset($state['pending_sent_at']) ? (string) $state['pending_sent_at'] : '';
+    $pending_job_started_at = isset($state['pending_job_started_at']) ? (string) $state['pending_job_started_at'] : '';
+    $pending_attempts = isset($state['pending_attempts']) ? (int) $state['pending_attempts'] : 0;
+
     if ($total <= 0) {
         $state['status'] = 'error';
         $state['last_error'] = 'Refresh queue has no dates.';
@@ -393,7 +543,59 @@ function csv_product_updater_process_refresh_queue() {
     // Wait while the update job is running
     $job = csv_product_updater_get_job_state();
     if (is_array($job) && isset($job['status']) && $job['status'] === 'running') {
+        // If we're processing a pending date and haven't recorded job start, record it for completion detection.
+        if ($pending_date !== '' && $pending_job_started_at === '' && isset($job['started_at'])) {
+            $state['pending_job_started_at'] = (string) $job['started_at'];
+        }
         $state['last_message'] = 'Waiting for product update job to finish...';
+        $state['updated_at'] = current_time('mysql');
+        csv_product_updater_save_refresh_queue_state($state);
+        wp_schedule_single_event(time() + 60, 'csv_product_updater_process_refresh_queue_event');
+        return;
+    }
+
+    // If we already dispatched a refresh for a day, wait for webhook-triggered job to start/finish.
+    if ($pending_date !== '') {
+        // If we observed a job start after dispatch, and now the job is no longer running, we can advance.
+        if ($pending_job_started_at !== '') {
+            $state['pending_date'] = '';
+            $state['pending_sent_at'] = '';
+            $state['pending_job_started_at'] = '';
+            $state['pending_attempts'] = 0;
+            $state['index'] = $index + 1;
+            $state['last_message'] = 'Completed backfill day for ' . $pending_date . '. Moving to next day...';
+            $state['updated_at'] = current_time('mysql');
+            csv_product_updater_save_refresh_queue_state($state);
+
+            $log = get_option('csv_product_updater_log', array());
+            if (!is_array($log)) $log = array();
+            array_unshift($log, 'Backfill day finished for ' . $pending_date . ' (job completed).');
+            csv_product_updater_save_log($log);
+
+            wp_schedule_single_event(time() + 5, 'csv_product_updater_process_refresh_queue_event');
+            return;
+        }
+
+        // Otherwise, we are still waiting for the API to finish and call the webhook (start_job).
+        // Give it time; if it takes too long, fail with a helpful error.
+        $sent_ts = strtotime($pending_sent_at);
+        $now_ts = (int) current_time('timestamp');
+        $waited = ($sent_ts ? max(0, $now_ts - (int) $sent_ts) : 0);
+        $max_wait = (int) (defined('HOUR_IN_SECONDS') ? HOUR_IN_SECONDS : 3600);
+        if ($sent_ts && $waited > $max_wait) {
+            $state['status'] = 'error';
+            $state['last_error'] = 'Timed out waiting for webhook/update job after refreshing ' . $pending_date . '.';
+            $state['updated_at'] = current_time('mysql');
+            csv_product_updater_save_refresh_queue_state($state);
+
+            $log = get_option('csv_product_updater_log', array());
+            if (!is_array($log)) $log = array();
+            array_unshift($log, $state['last_error']);
+            csv_product_updater_save_log($log);
+            return;
+        }
+
+        $state['last_message'] = 'Waiting for API to finish refresh for ' . $pending_date . ' (webhook will start the update job)...';
         $state['updated_at'] = current_time('mysql');
         csv_product_updater_save_refresh_queue_state($state);
         wp_schedule_single_event(time() + 60, 'csv_product_updater_process_refresh_queue_event');
@@ -423,13 +625,16 @@ function csv_product_updater_process_refresh_queue() {
 
     $log = get_option('csv_product_updater_log', array());
     if (!is_array($log)) $log = array();
-    array_unshift($log, $human . ' — requesting /refresh');
+    array_unshift($log, $human . ' — dispatching /refresh (async)');
     csv_product_updater_save_log($log);
 
-    $response = send_refresh_request($date, $force_update);
+    // Dispatch non-blocking to avoid CDN timeouts (Cloudflare 520/524) while the backend continues working.
+    $response = send_refresh_request($date, $force_update, false);
     if (is_wp_error($response)) {
-        $state['status'] = 'error';
-        $state['last_error'] = 'Refresh request failed for ' . $date . ': ' . $response->get_error_message();
+        $pending_attempts++;
+        $state['pending_attempts'] = $pending_attempts;
+        $state['last_error'] = 'Refresh dispatch failed for ' . $date . ': ' . $response->get_error_message();
+        $state['last_message'] = $state['last_error'];
         $state['updated_at'] = current_time('mysql');
         csv_product_updater_save_refresh_queue_state($state);
 
@@ -437,32 +642,37 @@ function csv_product_updater_process_refresh_queue() {
         if (!is_array($log)) $log = array();
         array_unshift($log, $state['last_error']);
         csv_product_updater_save_log($log);
+
+        if ($pending_attempts >= 3) {
+            $state['status'] = 'error';
+            $state['last_error'] = 'Giving up after 3 refresh dispatch failures for ' . $date . '.';
+            $state['updated_at'] = current_time('mysql');
+            csv_product_updater_save_refresh_queue_state($state);
+            return;
+        }
+
+        // Retry later
+        wp_schedule_single_event(time() + 60, 'csv_product_updater_process_refresh_queue_event');
         return;
     }
 
-    $code = wp_remote_retrieve_response_code($response);
-    $state['last_response_code'] = $code;
     $state['last_sent_date'] = $date;
     $state['last_sent_at'] = current_time('mysql');
-    $state['index'] = $index + 1;
-    $state['last_message'] = sprintf('Refresh complete for %s (HTTP %s). Starting update job...', $date, $code);
+    $state['last_response_code'] = null; // unknown in async mode
+    $state['pending_date'] = $date;
+    $state['pending_sent_at'] = $state['last_sent_at'];
+    $state['pending_job_started_at'] = '';
+    $state['pending_attempts'] = 0;
+    $state['last_message'] = sprintf('Refresh dispatched for %s. Waiting for webhook to start update job...', $date);
     $state['updated_at'] = current_time('mysql');
     csv_product_updater_save_refresh_queue_state($state);
 
     $log = get_option('csv_product_updater_log', array());
     if (!is_array($log)) $log = array();
-    array_unshift($log, sprintf('Backfill refresh %d/%d complete for %s (HTTP %s).', $index + 1, $total, $date, $code));
+    array_unshift($log, sprintf('Backfill refresh %d/%d dispatched for %s. Waiting for webhook...', $index + 1, $total, $date));
     csv_product_updater_save_log($log);
 
-    // Start the product update job for this day's refreshed CSV (best-effort; webhook may also start it)
-    csv_product_updater_start_job($force_update, 'refresh_queue');
-
-    $log = get_option('csv_product_updater_log', array());
-    if (!is_array($log)) $log = array();
-    array_unshift($log, 'Queued product update job for refreshed date ' . $date);
-    csv_product_updater_save_log($log);
-
-    // Re-run soon; we will wait for the job to finish before sending the next day.
+    // Re-run soon; we will wait for the webhook-started job to run/finish before advancing the queue.
     wp_schedule_single_event(time() + 60, 'csv_product_updater_process_refresh_queue_event');
 }
 
@@ -575,8 +785,11 @@ function csv_product_updater_create_product_from_row($row, $slug, &$log) {
     }
     $title = wp_strip_all_tags($title);
 
-    $description        = (string) csv_product_updater_row_value($row, 16, '');
-    $short_description  = (string) csv_product_updater_row_value($row, 15, '');
+    // NOTE (Cyborg): The API's "shortDescription" is treated as the primary description content on the site.
+    // Keep the mapping consistent for both create + update paths.
+    $short_description  = (string) csv_product_updater_row_value($row, 15, ''); // shortDescription (API)
+    $long_description   = (string) csv_product_updater_row_value($row, 16, ''); // description (API)
+    $description        = $short_description !== '' ? $short_description : $long_description;
     $featured_image_url = (string) csv_product_updater_row_value($row, 14, '');
 
     $product_id = 0;
@@ -596,6 +809,8 @@ function csv_product_updater_create_product_from_row($row, $slug, &$log) {
         if ($description !== '') {
             $product->set_description(wp_kses_post($description));
         }
+        // Keep WooCommerce short description populated from API shortDescription (legacy behavior).
+        // If you want it blank, set $short_description to '' above.
         if ($short_description !== '') {
             $product->set_short_description(wp_kses_post($short_description));
         }
@@ -683,6 +898,9 @@ function csv_product_updater_apply_row_metadata($product_id, $row, &$log) {
     $product_id = absint($product_id);
     if ($product_id <= 0) return;
 
+    // Cap prices (if user changed a product price above the max, clamp it back down)
+    csv_product_updater_enforce_price_cap($product_id, $log);
+
     // Tax settings + flags
     update_post_meta($product_id, '_downloadable', 'yes');
     update_post_meta($product_id, '_virtual', 'yes');
@@ -699,13 +917,15 @@ function csv_product_updater_apply_row_metadata($product_id, $row, &$log) {
         update_post_meta($product_id, 'demo-url', esc_url_raw($demoUrl));
     }
 
-    // Descriptions (standard mapping)
-    $short = (string) csv_product_updater_row_value($row, 15, '');
-    $long  = (string) csv_product_updater_row_value($row, 16, '');
-    if ($short !== '' || $long !== '') {
+    // Descriptions
+    // NOTE (Cyborg): The API's "shortDescription" should be the main Description on the site.
+    $short = (string) csv_product_updater_row_value($row, 15, ''); // shortDescription (API)
+    $long  = (string) csv_product_updater_row_value($row, 16, ''); // description (API)
+    $site_description = $short !== '' ? $short : $long;
+    if ($short !== '' || $site_description !== '') {
         $post_update = array('ID' => $product_id);
         if ($short !== '') $post_update['post_excerpt'] = wp_kses_post($short);
-        if ($long !== '')  $post_update['post_content'] = wp_kses_post($long);
+        if ($site_description !== '')  $post_update['post_content'] = wp_kses_post($site_description);
         wp_update_post($post_update);
     }
 
@@ -789,14 +1009,45 @@ function csv_product_updater_clear_stop() {
 }
 
 function csv_product_updater_acquire_lock() {
-    if (get_transient(CSV_PRODUCT_UPDATER_JOB_LOCK_TRANSIENT)) {
-        return false;
+    // NOTE (Cyborg): We use an *atomic* option-based lock to avoid rare race conditions where
+    // two runners (WP-Cron + admin AJAX tick) start at the same time and process the same CSV row,
+    // causing duplicate GET /downloads/*.zip requests.
+    $lock_name = (string) CSV_PRODUCT_UPDATER_JOB_LOCK_TRANSIENT . '_lock';
+    $now = (int) current_time('timestamp');
+    $ttl = (int) CSV_PRODUCT_UPDATER_JOB_LOCK_TTL;
+    if ($ttl < 30) $ttl = 30;
+
+    $payload = array(
+        'created_at' => $now,
+        'expires_at' => $now + $ttl,
+        'token'      => function_exists('wp_generate_uuid4') ? wp_generate_uuid4() : uniqid('csvpu_', true),
+    );
+
+    // Atomic acquire. If option exists, add_option returns false.
+    $acquired = add_option($lock_name, $payload, '', false);
+    if ($acquired) {
+        return true;
     }
-    set_transient(CSV_PRODUCT_UPDATER_JOB_LOCK_TRANSIENT, '1', CSV_PRODUCT_UPDATER_JOB_LOCK_TTL);
-    return true;
+
+    // Stale lock fallback (best-effort). If a worker crashed, allow takeover after expiry.
+    $existing = get_option($lock_name, false);
+    $existing_expires = 0;
+    if (is_array($existing) && isset($existing['expires_at'])) {
+        $existing_expires = (int) $existing['expires_at'];
+    }
+    if ($existing_expires > 0 && $existing_expires < $now) {
+        delete_option($lock_name);
+        $acquired = add_option($lock_name, $payload, '', false);
+        return (bool) $acquired;
+    }
+
+    return false;
 }
 
 function csv_product_updater_release_lock() {
+    $lock_name = (string) CSV_PRODUCT_UPDATER_JOB_LOCK_TRANSIENT . '_lock';
+    delete_option($lock_name);
+    // Back-compat cleanup (old transient lock)
     delete_transient(CSV_PRODUCT_UPDATER_JOB_LOCK_TRANSIENT);
 }
 
@@ -970,6 +1221,11 @@ function csv_product_updater_fetch_csv_rows($csv_file_url, &$log) {
  * @return void
  */
 function csv_product_updater_process_row($row, $force_update, &$result, &$log) {
+    // Back/forward compatibility: older job states may not include newer counters
+    if (!isset($result['products_skipped_missing_file'])) {
+        $result['products_skipped_missing_file'] = 0;
+    }
+
     $slug = sanitize_title((string) csv_product_updater_row_value($row, 7, '')); // slug column
         if ($slug === '') {
             $log[] = 'Skipped row - empty slug';
@@ -981,6 +1237,30 @@ function csv_product_updater_process_row($row, $force_update, &$result, &$log) {
         
     // Create missing products on-the-fly
         if (!$product) {
+        // ✅ Cyborg rule: If the source ZIP URL is missing (404), DO NOT create the product.
+        // We only apply this guard for NEW products; existing products are left as-is.
+        $relative_file_url = (string) csv_product_updater_row_value($row, 8, ''); // fileUrl column (relative)
+        $relative_file_url = trim($relative_file_url);
+        if ($relative_file_url === '') {
+            $log[] = 'Skipped creating product (missing fileUrl): ' . $slug;
+            $result['products_skipped_missing_file']++;
+            return;
+        }
+
+        $candidate_url = rtrim(FETCH_API_WPNOVA, '/') . '/' . ltrim($relative_file_url, '/');
+        if (filter_var($candidate_url, FILTER_VALIDATE_URL) === false) {
+            $log[] = 'Skipped creating product (invalid fileUrl): ' . $slug . ' - ' . $candidate_url;
+            $result['products_skipped_missing_file']++;
+            return;
+        }
+
+        $head_code = csv_product_updater_cached_head_status_code($candidate_url);
+        if ($head_code === 404) {
+            $log[] = 'Skipped creating product (file 404): ' . $slug . ' - ' . $candidate_url;
+            $result['products_skipped_missing_file']++;
+            return;
+        }
+
         $created_id = csv_product_updater_create_product_from_row($row, $slug, $log);
         if (is_wp_error($created_id)) {
             $log[] = 'Failed to create product for slug: ' . $slug . ' - ' . $created_id->get_error_message();
@@ -1120,6 +1400,7 @@ function csv_product_updater_start_job($force_update = false, $source = 'manual'
         'products_up_to_date'=> 0,
         'products_created'   => 0,
         'products_not_found' => 0,
+        'products_skipped_missing_file' => 0,
         'download_failures'  => 0,
         'force_update'       => $force_update ? true : false,
     );
@@ -1359,6 +1640,7 @@ function update_product_files($options = array()) {
         'products_up_to_date' => 0,
         'products_created' => 0,
         'products_not_found' => 0,
+        'products_skipped_missing_file' => 0,
         'download_failures' => 0,
         'force_update' => $force_update ? true : false,
     );
@@ -1898,27 +2180,23 @@ function csv_product_updater_admin_init() {
                 csv_product_updater_save_log($log);
             }
         } else {
-            // Single-day refresh (selected date only)
+            // Single-day refresh (selected date only) — dispatch async so the admin click never "hangs"
             $log = get_option('csv_product_updater_log', array());
             if (!is_array($log)) $log = array();
-            array_unshift($log, 'Single-day refresh requested for ' . $selected_date . ' (force=' . ($force_refresh_update ? 'true' : 'false') . ')');
+            array_unshift($log, 'Single-day refresh dispatched (async) for ' . $selected_date . ' (force=' . ($force_refresh_update ? 'true' : 'false') . '). Waiting for webhook...');
             csv_product_updater_save_log($log);
 
-            $response = send_refresh_request($selected_date, $force_refresh_update);
+            $response = send_refresh_request($selected_date, $force_refresh_update, false);
             if (is_wp_error($response)) {
                 $log = get_option('csv_product_updater_log', array());
                 if (!is_array($log)) $log = array();
-                array_unshift($log, 'Single-day refresh failed: ' . $response->get_error_message());
+                array_unshift($log, 'Single-day refresh dispatch failed: ' . $response->get_error_message());
                 csv_product_updater_save_log($log);
             } else {
-                $code = wp_remote_retrieve_response_code($response);
                 $log = get_option('csv_product_updater_log', array());
                 if (!is_array($log)) $log = array();
-                array_unshift($log, 'Single-day refresh complete for ' . $selected_date . ' (HTTP ' . $code . '). Starting update job...');
+                array_unshift($log, 'Single-day refresh request sent. When the API finishes, it will call the webhook to start the update job automatically.');
                 csv_product_updater_save_log($log);
-
-                // Best-effort: start update job now (webhook may also start it)
-                csv_product_updater_start_job($force_refresh_update, 'refresh_single_day');
             }
         }
 
