@@ -20,8 +20,35 @@ const {promisify} = require('util');
 const pipeline = promisify(stream.pipeline);
 const convertJsonToCsv = require('./convertJsonToCsv');
 
+// Absolute paths (avoid relying on process.cwd(), which differs in Docker/PM2)
+const PUBLIC_DIR = path.join(__dirname, '..', 'public');
+const DOWNLOADS_DIR = path.join(PUBLIC_DIR, 'downloads');
+const DATA_CSV_PATH = path.join(PUBLIC_DIR, 'data.csv');
+
 // Add a universal delay function
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Build a stable URL/path for the downloadable file
+const joinUrlPath = (base, filename) => {
+    const safeBase = (base || '/downloads').toString().trim();
+    const safeName = (filename || '').toString().trim();
+    if (!safeName) return safeBase || '/downloads';
+
+    // Absolute URL base
+    if (/^https?:\/\//i.test(safeBase)) {
+        try {
+            const u = new URL(safeBase.endsWith('/') ? safeBase : `${safeBase}/`);
+            u.pathname = path.posix.join(u.pathname, safeName);
+            return u.toString();
+        } catch (_) {
+            // fall through to string join
+        }
+    }
+
+    // Relative base (URL path)
+    const trimmed = safeBase.replace(/\/+$/g, '');
+    return `${trimmed || ''}/${safeName}`.replace(/\/{2,}/g, '/');
+};
 
 // Notify WordPress that data.csv is ready (optional)
 const notifyWordPressDataReady = async ({ downloadedCount = 0, errorCount = 0, forceUpdate = false } = {}) => {
@@ -99,12 +126,14 @@ const downloadWithRetry = async (item, formattedCookies) => {
         'product'
     );
     const filename = `${baseName}.zip`;
-    const filePath = path.join('./public/downloads/', filename);
-    const fileUrl = path.join(process.env.DOWNLOAD_URL || '/downloads', filename);
+    const fileWritePath = path.join(DOWNLOADS_DIR, filename);
+    const publicFilePath = path.posix.join('public', 'downloads', filename);
+    const fileUrl = joinUrlPath(process.env.DOWNLOAD_URL || '/downloads', filename);
 
     let lastError;
     for (let attempt = 1; attempt <= MAX_DOWNLOAD_RETRIES; attempt++) {
         try {
+            ensureDirectoryExistence(fileWritePath);
             const response = await axios({
                 url: item.downloadLink,
                 method: 'GET',
@@ -117,8 +146,8 @@ const downloadWithRetry = async (item, formattedCookies) => {
                 timeout: DOWNLOAD_TIMEOUT_MS
             });
 
-            await pipeline(response.data, fs.createWriteStream(filePath));
-            return { filename, filePath, fileUrl };
+            await pipeline(response.data, fs.createWriteStream(fileWritePath));
+            return { filename, filePath: publicFilePath, fileUrl };
         } catch (error) {
             lastError = error;
             const waitMs = DOWNLOAD_RETRY_BASE_DELAY_MS * attempt;
@@ -193,11 +222,11 @@ async function downloadFromChangelog(options = {}) {
     let errors = [];
 
     try {
-        // Ensure download directory exists
-        if (!fs.existsSync('./public/downloads/')) {
-            fs.mkdirSync('./public/downloads/', {recursive: true});
-            touch('./public/downloads/index.html');
+        // Ensure download directory exists (absolute)
+        if (!fs.existsSync(DOWNLOADS_DIR)) {
+            fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
         }
+        touch(path.join(DOWNLOADS_DIR, 'index.html'));
 
         // Pre-check: Test if the website is reachable
         console.log('🔍 Checking website availability...');
@@ -241,7 +270,10 @@ async function downloadFromChangelog(options = {}) {
         
         // Wait for table to be fully loaded and interactive
         console.log('⏳ Waiting for changelog table to load...');
-        const tableExists = await waitForElementReady(page, 'table#awcpt-product-table-99936', 30000);
+        const changelogTableSelector = 'table[id^="awcpt-product-table-"]';
+        const changelogRowSelector = `${changelogTableSelector} tr.awcpt-row`;
+
+        const tableExists = await waitForElementReady(page, changelogTableSelector, 30000);
         
         if (!tableExists) {
             throw new Error('Changelog table did not load');
@@ -253,11 +285,11 @@ async function downloadFromChangelog(options = {}) {
         // The table exists but rows are loaded dynamically via JavaScript
         let rowsLoaded = false;
         try {
-            rowsLoaded = await waitForElementReady(page, 'table#awcpt-product-table-99936 tbody tr.awcpt-row', 60000);
+            rowsLoaded = await waitForElementReady(page, changelogRowSelector, 60000);
         } catch (error) {
             // Fallback: Try alternate selectors if tbody structure is different
             console.log('⚠️  Standard row selector failed, trying alternate selector...');
-            rowsLoaded = await waitForElementReady(page, 'table#awcpt-product-table-99936 tr.awcpt-row', 30000);
+            rowsLoaded = await waitForElementReady(page, changelogRowSelector, 30000);
         }
         
         if (!rowsLoaded) {
@@ -502,11 +534,11 @@ async function downloadFromChangelog(options = {}) {
             await delay(randomDelay(750, 1250));
             
             // Re-wait for the table and rows after pagination
-            await waitForElementReady(page, 'table#awcpt-product-table-99936', 30000);
-            await waitForElementReady(page, 'table#awcpt-product-table-99936 tbody tr.awcpt-row', 60000)
+            await waitForElementReady(page, changelogTableSelector, 30000);
+            await waitForElementReady(page, changelogRowSelector, 60000)
                 .catch(async () => {
                     console.log('⚠️  Row selector failed after pagination, trying alternate selector...');
-                    await waitForElementReady(page, 'table#awcpt-product-table-99936 tr.awcpt-row', 30000);
+                    await waitForElementReady(page, changelogRowSelector, 30000);
                 });
             
             await page.waitForFunction((previousId) => {
@@ -995,9 +1027,9 @@ async function downloadFromChangelog(options = {}) {
         
         // Generate CSV file
         if (list.length > 0) {
-            touch('./public/data.csv');
+            touch(DATA_CSV_PATH);
             await new Promise((resolve, reject) => {
-                convertJsonToCsv(list, './public/data.csv', (err) => {
+                convertJsonToCsv(list, DATA_CSV_PATH, (err) => {
                     if (err) {
                         console.error('Error generating CSV:', err);
                         reject(err);
@@ -1039,5 +1071,30 @@ async function downloadFromChangelog(options = {}) {
     }
 }
 
-// Export the main function
-module.exports = downloadFromChangelog;
+// Prevent concurrent runs in a single Node process (avoids shared `persistentSession` race conditions)
+let _runQueue = Promise.resolve();
+let _runId = 0;
+
+const downloadFromChangelogQueued = async (options = {}) => {
+    const runId = ++_runId;
+    const dateLabel = (() => {
+        try {
+            const d = options?.date ? new Date(options.date) : new Date();
+            return isNaN(d.getTime()) ? 'invalid-date' : d.toISOString().slice(0, 10);
+        } catch (_) {
+            return 'unknown-date';
+        }
+    })();
+
+    const task = async () => {
+        console.log(`🧵 [queue] Starting changelog run #${runId} (date=${dateLabel})`);
+        return downloadFromChangelog(options);
+    };
+
+    const queued = _runQueue.then(task, task);
+    // Keep the queue alive even if this run fails
+    _runQueue = queued.catch(() => {});
+    return queued;
+};
+
+module.exports = downloadFromChangelogQueued;

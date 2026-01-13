@@ -845,6 +845,40 @@ function csv_product_updater_get_job_csv_cache_file_path() {
 }
 
 /**
+ * Delete the cached data.csv file created by the plugin for the current update job.
+ * (Best-effort; only deletes inside uploads/csv-product-updater/)
+ *
+ * @param array $state
+ * @param array $log
+ * @return void
+ */
+function csv_product_updater_cleanup_job_csv_cache($state, &$log) {
+    if (!is_array($state) || !isset($state['csv_cache']) || !is_array($state['csv_cache'])) {
+        return;
+    }
+    $file_path = isset($state['csv_cache']['file_path']) ? (string) $state['csv_cache']['file_path'] : '';
+    if ($file_path === '') return;
+
+    $upload_dir = wp_upload_dir();
+    if (!is_array($upload_dir) || empty($upload_dir['basedir'])) {
+        return;
+    }
+
+    $allowed_dir = wp_normalize_path(trailingslashit($upload_dir['basedir']) . 'csv-product-updater/');
+    $target = wp_normalize_path($file_path);
+
+    if ($allowed_dir === '' || strpos($target, $allowed_dir) !== 0) {
+        // Safety: don't delete anything outside our cache dir
+        return;
+    }
+
+    if (file_exists($file_path)) {
+        @unlink($file_path);
+        $log[] = 'Deleted cached data.csv after update job finished.';
+    }
+}
+
+/**
  * Download remote data.csv to a local file (once per job).
  *
  * @param string $csv_file_url
@@ -1145,6 +1179,7 @@ function csv_product_updater_process_batch() {
         $log = get_option('csv_product_updater_log', array());
         if (!is_array($log)) $log = array();
         array_unshift($log, 'Background update job stopped at ' . $state['ended_at']);
+        csv_product_updater_cleanup_job_csv_cache($state, $log);
         csv_product_updater_save_log($log);
         update_option('csv_product_updater_last_updated_date', $state['ended_at']);
         return;
@@ -1191,6 +1226,7 @@ function csv_product_updater_process_batch() {
         csv_product_updater_save_job_state($state);
 
         array_unshift($log, 'Background update job failed: ' . $rows->get_error_message());
+        csv_product_updater_cleanup_job_csv_cache($state, $log);
         csv_product_updater_save_log($log);
 
         csv_product_updater_release_lock();
@@ -1262,6 +1298,7 @@ function csv_product_updater_process_batch() {
         csv_product_updater_save_job_state($state);
 
         array_unshift($log, 'Background update job stopped at ' . $state['ended_at']);
+        csv_product_updater_cleanup_job_csv_cache($state, $log);
         csv_product_updater_save_log($log);
         update_option('csv_product_updater_last_updated_date', $state['ended_at']);
 
@@ -1283,6 +1320,7 @@ function csv_product_updater_process_batch() {
         csv_product_updater_save_job_state($state);
 
         array_unshift($log, 'Background update job completed at ' . $state['ended_at']);
+        csv_product_updater_cleanup_job_csv_cache($state, $log);
         csv_product_updater_save_log($log);
         update_option('csv_product_updater_last_updated_date', $state['ended_at']);
 
@@ -1538,6 +1576,7 @@ function csv_product_updater_admin_menu() {
 add_action('wp_ajax_csv_product_updater_start', 'csv_product_updater_ajax_start');
 add_action('wp_ajax_csv_product_updater_status', 'csv_product_updater_ajax_status');
 add_action('wp_ajax_csv_product_updater_stop', 'csv_product_updater_ajax_stop');
+add_action('wp_ajax_csv_product_updater_tick', 'csv_product_updater_ajax_tick');
 
 function csv_product_updater_ajax_start() {
     if (!current_user_can('manage_options')) {
@@ -1571,6 +1610,23 @@ function csv_product_updater_ajax_stop() {
     check_ajax_referer('csv_product_updater_job');
 
     csv_product_updater_request_stop();
+    $state = csv_product_updater_get_job_state();
+    wp_send_json_success($state);
+}
+
+/**
+ * Manual runner: process one batch step via AJAX.
+ * This makes the manual update work even if WP-Cron is disabled/misbehaving.
+ */
+function csv_product_updater_ajax_tick() {
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(array('error' => 'forbidden'), 403);
+    }
+    check_ajax_referer('csv_product_updater_job');
+
+    // Process one batch step (respects locks and stop flag)
+    csv_product_updater_process_batch();
+
     $state = csv_product_updater_get_job_state();
     wp_send_json_success($state);
 }
@@ -2064,11 +2120,20 @@ jQuery(function($) {
     });
   }
 
+  function tickJob() {
+    return $.post(ajaxurl, {
+      action: 'csv_product_updater_tick',
+      _ajax_nonce: nonce
+    });
+  }
+
   function schedulePoll() {
     if (pollTimer) return;
     pollTimer = setTimeout(function() {
       pollTimer = null;
-      fetchStatus();
+      // Advance one batch step, then refresh status UI.
+      // This keeps manual updates progressing even if WP-Cron is disabled.
+      tickJob().always(fetchStatus);
     }, 1500);
   }
 
