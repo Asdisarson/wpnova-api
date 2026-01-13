@@ -2,7 +2,7 @@
 /*
 Plugin Name: CSV Product Updater
 Description: Updates WooCommerce product files based on a CSV file.
-Version: 1.1
+Version: 1.2
 Author: WP NOVA
 */
 
@@ -11,6 +11,12 @@ define('WPNOVA_WEBHOOK_SECRET', '2T1pINQJL3g6WGcf8d0d58cf4fd8b26cf7dd2bfafd87da4
 // 15 minutes (in seconds) for all network calls made by this plugin
 if (!defined('CSV_PRODUCT_UPDATER_HTTP_TIMEOUT')) {
     define('CSV_PRODUCT_UPDATER_HTTP_TIMEOUT', defined('MINUTE_IN_SECONDS') ? 15 * MINUTE_IN_SECONDS : 900);
+}
+
+// Refresh dispatch timeout (seconds). The API now returns immediately with 200 and does work in background,
+// so we keep this short to avoid admin/cron requests hanging if the API is temporarily unreachable.
+if (!defined('CSV_PRODUCT_UPDATER_REFRESH_DISPATCH_TIMEOUT')) {
+    define('CSV_PRODUCT_UPDATER_REFRESH_DISPATCH_TIMEOUT', 20);
 }
 
 // Default price applied ONLY to newly created products (does not modify existing products)
@@ -146,7 +152,8 @@ function csv_product_updater_refresh_deactivation() {
 // Hook into the daily event to send the GET request (async/non-blocking so cron doesn't hang)
 add_action('csv_product_updater_refresh_daily_event', 'csv_product_updater_refresh_daily_event_handler');
 function csv_product_updater_refresh_daily_event_handler() {
-    $resp = send_refresh_request(null, false, false);
+    // /refresh returns immediately (API runs in background), so we can safely do a normal blocking request here.
+    $resp = send_refresh_request(null, false);
     if (is_wp_error($resp)) {
         $log = get_option('csv_product_updater_log', array());
         if (!is_array($log)) $log = array();
@@ -176,8 +183,13 @@ function send_refresh_request($date = null, $force_update = false, $blocking = t
         $endpoint_url = add_query_arg($params, $endpoint_url);
     }
 
+    $dispatch_timeout = defined('CSV_PRODUCT_UPDATER_REFRESH_DISPATCH_TIMEOUT') ? (int) CSV_PRODUCT_UPDATER_REFRESH_DISPATCH_TIMEOUT : 20;
+    if ($dispatch_timeout <= 0) {
+        $dispatch_timeout = 20;
+    }
+
     $args = array(
-        'timeout'     => $blocking ? CSV_PRODUCT_UPDATER_HTTP_TIMEOUT : 0.01,
+        'timeout'     => $blocking ? $dispatch_timeout : 0.01,
         'blocking'    => (bool) $blocking,
         'redirection' => 5,
         'headers'     => array(
@@ -451,10 +463,6 @@ function csv_product_updater_start_refresh_queue($start_date, $force_update = fa
 
     csv_product_updater_save_refresh_queue_state($state);
 
-    // Kick off processing immediately
-    wp_schedule_single_event(time(), 'csv_product_updater_process_refresh_queue_event');
-    spawn_cron();
-
     // Log start
     $log = get_option('csv_product_updater_log', array());
     if (!is_array($log)) $log = array();
@@ -470,6 +478,9 @@ function csv_product_updater_start_refresh_queue($start_date, $force_update = fa
         )
     );
     csv_product_updater_save_log($log);
+
+    // Kick off processing immediately (run once now; the runner will schedule follow-ups as needed)
+    csv_product_updater_process_refresh_queue();
 
     return $state;
 }
@@ -632,8 +643,8 @@ function csv_product_updater_process_refresh_queue() {
     array_unshift($log, $human . ' — dispatching /refresh (async)');
     csv_product_updater_save_log($log);
 
-    // Dispatch non-blocking to avoid CDN timeouts (Cloudflare 520/524) while the backend continues working.
-    $response = send_refresh_request($date, $force_update, false);
+    // Dispatch refresh (API responds immediately; backend continues working and later triggers webhook).
+    $response = send_refresh_request($date, $force_update);
     if (is_wp_error($response)) {
         $pending_attempts++;
         $state['pending_attempts'] = $pending_attempts;
@@ -663,7 +674,7 @@ function csv_product_updater_process_refresh_queue() {
 
     $state['last_sent_date'] = $date;
     $state['last_sent_at'] = current_time('mysql');
-    $state['last_response_code'] = null; // unknown in async mode
+    $state['last_response_code'] = (int) wp_remote_retrieve_response_code($response);
     $state['pending_date'] = $date;
     $state['pending_sent_at'] = $state['last_sent_at'];
     $state['pending_job_started_at'] = '';
@@ -2199,7 +2210,8 @@ function csv_product_updater_admin_init() {
             array_unshift($log, 'Single-day refresh dispatched (async) for ' . $selected_date . ' (force=' . ($force_refresh_update ? 'true' : 'false') . '). Waiting for webhook...');
             csv_product_updater_save_log($log);
 
-            $response = send_refresh_request($selected_date, $force_refresh_update, false);
+            // /refresh returns immediately (API runs in background), so a normal blocking request is fine here too.
+            $response = send_refresh_request($selected_date, $force_refresh_update);
             if (is_wp_error($response)) {
                 $log = get_option('csv_product_updater_log', array());
                 if (!is_array($log)) $log = array();
